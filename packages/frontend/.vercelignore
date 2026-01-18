@@ -1,0 +1,12 @@
+node_modules
+.vite
+dist
+*.log
+.DS_Store
+tsconfig.json
+vite.config.ts
+src/
+*.md
+!README.md
+turbo.json
+.turbo
