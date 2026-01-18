@@ -142,6 +142,30 @@ export async function updateWebhookStatus(
 }
 
 /**
+ * Обновить схему бота
+ */
+export async function updateBotSchema(
+  botId: string,
+  userId: number,
+  schema: BotSchema
+): Promise<boolean> {
+  const client = await getPostgresClient();
+  
+  try {
+    const result = await client.query(
+      `UPDATE bots 
+       SET schema = $1, schema_version = schema_version + 1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND user_id = $3`,
+      [JSON.stringify(schema), botId, userId]
+    );
+    
+    return result.rowCount ? result.rowCount > 0 : false;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Инициализация таблицы bots (создание таблицы если не существует)
  */
 export async function initializeBotsTable(): Promise<void> {

@@ -47,3 +47,4 @@ docker-compose.override.yml
 
 # Cloudflare Tunnel logs
 *.cloudflared.log
+.vercel

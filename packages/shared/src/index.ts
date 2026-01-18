@@ -1,5 +1,7 @@
 // Shared types and utilities
 
+export * from './types/bot-schema';
+
 export interface User {
   id: number;
   telegramId: number;

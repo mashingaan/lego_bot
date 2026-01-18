@@ -34,25 +34,29 @@ function validateSchema(schema: any): schema is BotSchema {
       return false;
     }
     
-    if (!state.message || typeof state.message !== 'string') {
+    // Проверяем, что state имеет правильную структуру
+    const stateObj = state as { message?: unknown; buttons?: unknown };
+    
+    if (!stateObj.message || typeof stateObj.message !== 'string') {
       return false;
     }
     
     // Проверяем кнопки, если они есть
-    if (state.buttons) {
-      if (!Array.isArray(state.buttons)) {
+    if (stateObj.buttons) {
+      if (!Array.isArray(stateObj.buttons)) {
         return false;
       }
       
-      for (const button of state.buttons) {
-        if (!button.text || typeof button.text !== 'string') {
+      for (const button of stateObj.buttons) {
+        const buttonObj = button as { text?: unknown; nextState?: unknown };
+        if (!buttonObj.text || typeof buttonObj.text !== 'string') {
           return false;
         }
-        if (!button.nextState || typeof button.nextState !== 'string') {
+        if (!buttonObj.nextState || typeof buttonObj.nextState !== 'string') {
           return false;
         }
         // Проверяем, что nextState существует в states
-        if (!schema.states[button.nextState]) {
+        if (!schema.states[buttonObj.nextState as string]) {
           return false;
         }
       }

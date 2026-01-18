@@ -14,6 +14,7 @@ interface BotCreationSession {
 // Расширение контекста для хранения данных сессии
 interface BotWizardSession extends Scenes.WizardSession {
   botCreation: BotCreationSession;
+  cursor: number; // Требуется для WizardSession
 }
 
 export interface BotWizardContext extends Context, Scenes.WizardContext<BotWizardSession> {}
@@ -27,6 +28,9 @@ export const createBotScene = new Scenes.WizardScene<BotWizardContext>(
       ctx.scene.session.botCreation = {
         step: 'waiting_for_token',
       };
+    }
+    if (typeof ctx.scene.session.cursor === 'undefined') {
+      ctx.scene.session.cursor = 0;
     }
 
     // Отправляем инструкцию
@@ -66,7 +70,7 @@ export const createBotScene = new Scenes.WizardScene<BotWizardContext>(
     // Шаг 1: Получение токена
     const message = ctx.message;
     
-    if (!('text' in message)) {
+    if (!message || !('text' in message)) {
       await ctx.reply('❌ Пожалуйста, отправьте текстовое сообщение с токеном бота.');
       return;
     }
@@ -116,7 +120,7 @@ export const createBotScene = new Scenes.WizardScene<BotWizardContext>(
     // Шаг 2: Получение названия
     const message = ctx.message;
     
-    if (!('text' in message)) {
+    if (!message || !('text' in message)) {
       await ctx.reply('❌ Пожалуйста, отправьте название бота текстом.');
       return;
     }
