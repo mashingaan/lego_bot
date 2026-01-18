@@ -11,7 +11,7 @@ import { handleStart, handleCreateBot, handleMyBots, handleHelp } from './bot/co
 import { handleSetWebhook, handleDeleteWebhook } from './bot/webhook-commands';
 import { handleEditSchema } from './bot/schema-commands';
 import path from 'path';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 
 // Загрузка .env файла из корня проекта
 const envPath = path.resolve(__dirname, '../../../.env');
