@@ -1,6 +1,6 @@
 import { Context } from 'telegraf';
 import { getBotById, updateBotSchema } from '../db/bots';
-import { BotSchema } from '@dialogue-constructor/shared/types/bot-schema';
+import { BotSchema } from '@dialogue-constructor/shared';
 import { getBackButtonKeyboard } from './keyboards';
 
 /**

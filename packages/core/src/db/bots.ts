@@ -1,6 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { getPool, getPostgresClient } from './postgres';
-import { BotSchema } from '@dialogue-constructor/shared/types/bot-schema';
+import { BotSchema } from '@dialogue-constructor/shared';
 
 export interface Bot {
   id: string;
