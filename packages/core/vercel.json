@@ -1,6 +1,13 @@
 {
   "buildCommand": "cd ../.. && npm run build",
   "installCommand": "cd ../.. && npm install",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "framework": null,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ]
 }
 
