@@ -1,6 +1,4 @@
 {
-  "buildCommand": "cd ../.. && npm run build --filter=@dialogue-constructor/shared...@dialogue-constructor/core",
-  "installCommand": "cd ../.. && npm install",
   "version": 2,
   "builds": [
     {
@@ -13,9 +11,6 @@
       "src": "/(.*)",
       "dest": "/api/index"
     }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  }
+  ]
 }
 

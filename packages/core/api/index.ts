@@ -1,8 +1,9 @@
 // Vercel Serverless Function
 // Экспортируем Express app для работы в Vercel
-// После build команды, dist/index.js будет доступен
+// Импортируем из скомпилированного dist
 // @ts-ignore - dist файлы могут не иметь типов
-import app from '../dist/index';
+const app = require('../dist/index').default || require('../dist/index');
 
-export default app;
+// Vercel ожидает экспорт handler функции
+module.exports = app;
 
