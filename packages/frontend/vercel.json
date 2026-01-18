@@ -1,5 +1,4 @@
 {
-  "version": 2,
   "buildCommand": "",
   "installCommand": "",
   "outputDirectory": ".",
@@ -22,15 +21,6 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=3600"
-        }
-      ]
-    },
-    {
-      "source": "/(.*\\.(js|css|jpg|jpeg|png|gif|ico|svg|woff|woff2|ttf|eot))",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
         }
       ]
     }

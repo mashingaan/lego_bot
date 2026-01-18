@@ -10,3 +10,5 @@ src/
 !README.md
 turbo.json
 .turbo
+package.json
+package-lock.json
