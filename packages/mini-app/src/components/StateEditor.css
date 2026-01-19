@@ -1,0 +1,54 @@
+.state-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.state-editor h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--tg-theme-text-color);
+}
+
+.editor-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-field label {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 8px;
+  color: var(--tg-theme-text-color);
+}
+
+.buttons-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.button-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--tg-theme-secondary-bg-color);
+  border-radius: 8px;
+}
+
+.empty-hint {
+  padding: 16px;
+  text-align: center;
+  color: var(--tg-theme-hint-color);
+  font-size: 14px;
+  background: var(--tg-theme-secondary-bg-color);
+  border-radius: 8px;
+}
+
+@media (max-width: 768px) {
+  .button-editor {
+    flex-direction: column;
+  }
+}
+

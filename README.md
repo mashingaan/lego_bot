@@ -40,8 +40,23 @@ lego_bot/
 │   │
 │   ├── frontend/       # Веб-интерфейс для редактирования схем
 │   │   ├── index.html  # HTML страница
-│   │   ├── script.js   # Логика (API, валидация, Telegram auth)
+│   │   ├── script.js   # Логика (API, валидация)
 │   │   └── style.css   # Стили
+│   │
+│   ├── mini-app/       # Telegram Mini App (React + TypeScript + Vite)
+│   │   ├── src/
+│   │   │   ├── components/           # React компоненты
+│   │   │   │   ├── SchemaEditor.tsx  # Редактор схемы
+│   │   │   │   ├── StateEditor.tsx   # Редактор состояния
+│   │   │   │   └── Preview.tsx       # Предпросмотр
+│   │   │   ├── pages/                # Страницы
+│   │   │   │   ├── BotList.tsx       # Список ботов
+│   │   │   │   ├── BotEditor.tsx     # Редактор бота
+│   │   │   │   └── Templates.tsx     # Шаблоны
+│   │   │   └── utils/
+│   │   │       └── api.ts            # API клиент
+│   │   └── public/
+│   │       └── tonconnect-manifest.json # TON Connect манифест
 │   │
 │   └── shared/         # Общие TypeScript типы
 │       └── src/
@@ -137,7 +152,7 @@ cd packages/frontend && python3 -m http.server 8000
 **Веб-интерфейс для редактирования схем**
 
 Чистый HTML/CSS/JS без фреймворков:
-- Telegram Login Widget для авторизации
+- Ввод User ID для авторизации
 - Список ботов пользователя
 - JSON редактор с валидацией
 - Предпросмотр схемы
@@ -146,6 +161,23 @@ cd packages/frontend && python3 -m http.server 8000
 - `index.html` - структура страницы
 - `script.js` - логика (API запросы, валидация)
 - `style.css` - стили
+
+### `@dialogue-constructor/mini-app`
+
+**Telegram Mini App для визуального редактирования**
+
+React + TypeScript + Vite приложение:
+- Интеграция с Telegram WebApp SDK
+- Визуальный редактор схем с drag-and-drop
+- Редактор состояний (сообщения + кнопки)
+- Предпросмотр бота в реальном времени
+- Готовые шаблоны схем
+- TON Connect для платежей
+
+**Структура:**
+- `src/components/` - React компоненты
+- `src/pages/` - страницы приложения
+- `src/utils/api.ts` - API клиент
 
 ### `@dialogue-constructor/shared`
 

@@ -106,17 +106,18 @@ app.get('/health', async (req: Request, res: Response) => {
   res.status(statusCode).json(health);
 });
 
-// Middleware для проверки user_id (упрощенная авторизация)
+// Middleware для проверки user_id (упрощенная авторизация без Telegram)
 async function requireUserId(req: Request, res: Response, next: Function) {
-  const userId = req.query.user_id as string || req.body.user_id;
+  // user_id может быть в query (GET) или в query (POST через URL)
+  const userId = req.query.user_id as string;
   
   if (!userId) {
-    return res.status(400).json({ error: 'Missing user_id parameter' });
+    return res.status(400).json({ error: 'Missing user_id parameter in query string' });
   }
 
   const userIdNum = parseInt(userId, 10);
   if (isNaN(userIdNum)) {
-    return res.status(400).json({ error: 'Invalid user_id format' });
+    return res.status(400).json({ error: 'Invalid user_id format. Must be a number' });
   }
 
   (req as any).user = { id: userIdNum };

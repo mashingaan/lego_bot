@@ -1,0 +1,88 @@
+.schema-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.editor-header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.editor-content {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.states-list {
+  flex: 0 0 250px;
+  overflow-y: auto;
+}
+
+.states-list h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--tg-theme-text-color);
+}
+
+.state-item {
+  padding: 12px;
+  background: var(--tg-theme-secondary-bg-color);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.state-item:hover {
+  background: var(--tg-theme-button-color);
+  color: var(--tg-theme-button-text-color);
+}
+
+.state-item.active {
+  background: var(--tg-theme-button-color);
+  color: var(--tg-theme-button-text-color);
+}
+
+.state-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.state-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.state-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-small {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.state-editor-container {
+  flex: 1;
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .editor-content {
+    flex-direction: column;
+  }
+
+  .states-list {
+    flex: 0 0 auto;
+    max-height: 200px;
+  }
+}
+
