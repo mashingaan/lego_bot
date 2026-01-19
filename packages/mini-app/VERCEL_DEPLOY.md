@@ -61,7 +61,7 @@
 
 3. После добавления переменных, сделайте **Redeploy** (Settings → Deployments → три точки → Redeploy)
 
-### Шаг 5: Обновление TON Connect Manifest
+### Шаг 6: Обновление TON Connect Manifest
 
 1. После деплоя скопируйте URL вашего проекта (например: `https://lego-bot-mini-app.vercel.app`)
 2. Обновите `public/tonconnect-manifest.json`:
