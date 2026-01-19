@@ -22,14 +22,28 @@
 
 **Важно:** Настройте проект для папки `packages/mini-app`
 
-1. В разделе **"Configure Project"** укажите:
-   - **Root Directory**: `packages/mini-app`
+1. В модальном окне **"Root Directory"**:
+   - Если вы видите список директорий и там нет `packages/mini-app`, нажмите **"Cancel"**
+   - Если есть поле для ввода, введите: `packages/mini-app`
+   - Или выберите любую директорию из списка (например, `packages`) — потом можно будет изменить
+
+2. В разделе **"Configure Project"** укажите:
+   - **Root Directory**: `packages/mini-app` (введите вручную, если не видите в списке)
    - **Framework Preset**: `Vite` (будет определен автоматически)
    - **Build Command**: `npm run build` (или оставьте пустым)
    - **Output Directory**: `dist` (или оставьте пустым)
    - **Install Command**: `npm install` (или оставьте пустым)
 
-2. Нажмите **"Deploy"**
+   **Примечание:** Если поле Root Directory не видно сразу, разверните раздел "Advanced" или "Show more options"
+
+3. Нажмите **"Deploy"**
+
+**Если не можете указать Root Directory при создании проекта:**
+1. Создайте проект с любым Root Directory
+2. После создания перейдите в **Settings** → **General**
+3. Найдите поле **"Root Directory"**
+4. Измените на `packages/mini-app`
+5. Сделайте **Redeploy**
 
 ### Шаг 4: Настройка переменных окружения
 
