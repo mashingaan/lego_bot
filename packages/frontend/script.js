@@ -40,13 +40,14 @@ function initializeApp() {
 }
 
 // Обработка авторизации через Telegram
-function onTelegramAuth(user) {
+// Функция должна быть глобальной для работы Telegram Widget
+window.onTelegramAuth = function(user) {
     console.log('Telegram auth:', user);
     currentUser = user;
     localStorage.setItem('telegram_user', JSON.stringify(user));
     showEditor();
     loadBots();
-}
+};
 
 function handleLogout() {
     currentUser = null;
