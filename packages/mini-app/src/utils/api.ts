@@ -1,4 +1,4 @@
-import { Bot, BotWithSchema, ApiError } from '../types';
+import { Bot, ApiError } from '../types';
 import { BotSchema } from '@dialogue-constructor/shared';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';

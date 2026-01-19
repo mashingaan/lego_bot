@@ -90,7 +90,7 @@ export default function Templates() {
   const navigate = useNavigate();
 
   // В реальном приложении здесь будет функция для применения шаблона к боту
-  const handleTemplateSelect = (template: BotSchema) => {
+  const handleTemplateSelect = (_template: BotSchema) => {
     // Показываем предпросмотр или применяем к текущему боту
     alert('Выберите бота для применения шаблона в редакторе');
     navigate('/');

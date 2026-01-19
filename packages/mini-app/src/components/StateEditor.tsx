@@ -55,7 +55,7 @@ export default function StateEditor({
   };
 
   const handleDeleteButton = (index: number) => {
-    const newButtons = buttons.filter((_, i) => i !== index);
+    const newButtons = buttons.filter((_button: typeof buttons[0], i: number) => i !== index);
     setButtons(newButtons);
     onChange({ buttons: newButtons.length > 0 ? newButtons : undefined });
   };
@@ -86,7 +86,7 @@ export default function StateEditor({
           <div className="empty-hint">Нет кнопок</div>
         ) : (
           <div className="buttons-list">
-            {buttons.map((button, index) => (
+            {buttons.map((button: typeof buttons[0], index: number) => (
               <div key={index} className="button-editor">
                 <input
                   className="input"
