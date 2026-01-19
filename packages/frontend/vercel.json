@@ -1,7 +1,19 @@
 {
-  "buildCommand": "",
-  "installCommand": "",
-  "outputDirectory": ".",
-  "framework": null,
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD ."
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/html; charset=utf-8"
+        }
+      ]
+    }
+  ]
 }
