@@ -53,8 +53,21 @@ initializeDatabases().catch((error) => {
 
 // CORS configuration
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const MINI_APP_URL = process.env.MINI_APP_URL || 'https://lego-bot-miniapp.vercel.app';
+const allowedOrigins = [FRONTEND_URL, MINI_APP_URL].filter(Boolean);
+
 app.use(cors({
-  origin: FRONTEND_URL,
+  origin: (origin, callback) => {
+    // Разрешаем запросы без origin (например, мобильные приложения, Telegram)
+    if (!origin) {
+      return callback(null, true);
+    }
+    if (allowedOrigins.includes(origin) || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Разрешаем все для упрощения
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -343,6 +356,43 @@ if (!botToken) {
     }
   });
 
+  // Команда для настройки webhook основного бота
+  botInstance.command('setup_webhook', async (ctx) => {
+    try {
+      const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      if (!botToken) {
+        await ctx.reply('❌ TELEGRAM_BOT_TOKEN не установлен в переменных окружения.');
+        return;
+      }
+
+      const apiUrl = process.env.VERCEL_URL 
+        ? `https://${process.env.VERCEL_URL}` 
+        : process.env.API_URL || 'https://lego-bot-core.vercel.app';
+      const webhookUrl = `${apiUrl}/api/webhook`;
+
+      const { setWebhook } = await import('./services/telegram-webhook');
+      const result = await setWebhook(botToken, webhookUrl);
+
+      if (result.ok) {
+        await ctx.reply(
+          `✅ <b>Webhook для основного бота настроен!</b>\n\n` +
+          `🔗 URL: <code>${webhookUrl}</code>\n\n` +
+          `Теперь бот будет работать на Vercel.`,
+          { parse_mode: 'HTML' }
+        );
+        console.log(`✅ Main bot webhook configured: ${webhookUrl}`);
+      } else {
+        throw new Error(result.description || 'Unknown error');
+      }
+    } catch (error) {
+      console.error('Error setting main bot webhook:', error);
+      await ctx.reply(
+        `❌ Ошибка настройки webhook: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        { parse_mode: 'HTML' }
+      );
+    }
+  });
+
   // Команда /setwebhook <bot_id>
   botInstance.command('setwebhook', async (ctx) => {
     try {
@@ -408,29 +458,52 @@ if (!botToken) {
     ctx.reply('❌ Произошла ошибка. Попробуйте позже.').catch(console.error);
   });
   
-  // Запуск бота
-  botInstance.launch({
-    allowedUpdates: ['message', 'callback_query'],
-    dropPendingUpdates: false, // Обрабатываем накопленные обновления
-  }).then(() => {
-    console.log('✅ Telegram bot started successfully');
-    console.log('✅ Бот готов к работе');
-    // Получаем информацию о боте
-    botInstance?.telegram.getMe().then((botInfo) => {
-      console.log('🤖 Bot info:', {
-        id: botInfo.id,
-        username: botInfo.username,
-        firstName: botInfo.first_name,
-      });
-      console.log('💬 Отправьте боту /start для проверки');
-    }).catch(console.error);
-  }).catch((error) => {
-    console.error('❌ Failed to launch bot:', error);
-    console.error('Проверьте:');
-    console.error('1. Правильность токена в .env файле');
-    console.error('2. Подключение к интернету');
-    console.error('3. Доступность Telegram API');
-  });
+
+  // Запуск бота через long polling (только локально, не на Vercel)
+  if (process.env.VERCEL !== '1') {
+    botInstance.launch({
+      allowedUpdates: ['message', 'callback_query'],
+      dropPendingUpdates: false,
+    }).then(() => {
+      console.log('✅ Telegram bot started successfully (long polling)');
+      console.log('✅ Бот готов к работе');
+      botInstance?.telegram.getMe().then((botInfo) => {
+        console.log('🤖 Bot info:', {
+          id: botInfo.id,
+          username: botInfo.username,
+          firstName: botInfo.first_name,
+        });
+        console.log('💬 Отправьте боту /start для проверки');
+      }).catch(console.error);
+    }).catch((error) => {
+      console.error('❌ Failed to launch bot:', error);
+      console.error('Проверьте:');
+      console.error('1. Правильность токена в .env файле');
+      console.error('2. Подключение к интернету');
+      console.error('3. Доступность Telegram API');
+    });
+  } else {
+    console.log('🔗 Bot configured for webhook mode (Vercel serverless)');
+    console.log('📡 Webhook endpoint: /api/webhook');
+    console.log('⚠️  Не забудьте настроить webhook через Telegram API или команду /setup_webhook');
+    
+    // Webhook endpoint для основного бота (только на Vercel)
+    app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
+      try {
+        if (!botInstance) {
+          console.error('Bot instance not initialized');
+          return res.status(503).json({ error: 'Bot not initialized' });
+        }
+        
+        const update = JSON.parse(req.body.toString());
+        await botInstance.handleUpdate(update);
+        res.status(200).json({ ok: true });
+      } catch (error) {
+        console.error('Webhook error:', error);
+        res.status(200).json({ ok: true }); // Всегда возвращаем 200 для Telegram
+      }
+    });
+  }
 }
 
 // Start server (only in non-serverless environment)
