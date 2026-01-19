@@ -1,3 +1,10 @@
+/**
+ * CRUD операции для таблицы bots
+ * 
+ * Боты хранятся в PostgreSQL с зашифрованными токенами.
+ * Схемы диалогов хранятся в JSONB поле schema.
+ */
+
 import { Pool, PoolClient } from 'pg';
 import { getPool, getPostgresClient } from './postgres';
 import { BotSchema } from '@dialogue-constructor/shared';

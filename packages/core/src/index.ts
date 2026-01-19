@@ -13,6 +13,16 @@ import { handleEditSchema } from './bot/schema-commands';
 import path from 'path';
 import * as crypto from 'crypto';
 
+/**
+ * Core Server - Основной сервер приложения
+ * 
+ * Функциональность:
+ * - Express API для фронтенда (/api/bots, /api/bot/:id/schema)
+ * - Telegram бот (Telegraf) с командами /start, /create_bot, /my_bots, etc.
+ * - PostgreSQL для хранения ботов (токены зашифрованы)
+ * - Redis для кеширования
+ */
+
 // Загрузка .env файла из корня проекта
 const envPath = path.resolve(__dirname, '../../../.env');
 dotenv.config({ path: envPath });

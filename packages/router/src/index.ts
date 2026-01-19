@@ -1,3 +1,13 @@
+/**
+ * Router Service - Webhook роутер для созданных ботов
+ * 
+ * Функциональность:
+ * - Принимает webhook от Telegram на /webhook/:botId
+ * - Загружает схему бота из PostgreSQL
+ * - Определяет состояние пользователя из Redis
+ * - Отправляет сообщения и кнопки согласно схеме
+ */
+
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
