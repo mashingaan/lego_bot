@@ -70,11 +70,19 @@ function initializeApp() {
 // Обработка авторизации через Telegram
 // Функция должна быть глобальной для работы Telegram Widget
 window.onTelegramAuth = function(user) {
-    console.log('Telegram auth:', user);
+    console.log('✅ Telegram auth received:', user);
     currentUser = user;
     localStorage.setItem('telegram_user', JSON.stringify(user));
     showEditor();
-    loadBots();
+    
+    // Показываем сообщение об успешной авторизации
+    console.log('✅ User authenticated:', user.first_name, user.last_name);
+    console.log('✅ User ID:', user.id);
+    
+    // Загружаем ботов
+    loadBots().catch(error => {
+        console.error('❌ Error loading bots:', error);
+    });
 };
 
 function handleLogout() {
@@ -105,10 +113,14 @@ async function loadBots() {
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            const errorText = await response.text();
+            console.error('❌ API Error:', response.status, errorText);
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
         }
 
-        bots = await response.json();
+        const data = await response.json();
+        console.log('✅ Bots loaded:', data);
+        bots = data;
         populateBotSelect();
     } catch (error) {
         console.error('Error loading bots:', error);
