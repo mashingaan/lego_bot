@@ -70,20 +70,37 @@ function initializeApp() {
 // Обработка авторизации через Telegram
 // Функция должна быть глобальной для работы Telegram Widget
 window.onTelegramAuth = function(user) {
+    console.log('🎉 ===== TELEGRAM AUTH CALLBACK CALLED =====');
     console.log('✅ Telegram auth received:', user);
+    console.log('✅ User data:', JSON.stringify(user, null, 2));
+    
+    if (!user) {
+        console.error('❌ User data is empty!');
+        alert('Ошибка: данные пользователя не получены');
+        return;
+    }
+    
     currentUser = user;
     localStorage.setItem('telegram_user', JSON.stringify(user));
-    showEditor();
     
     // Показываем сообщение об успешной авторизации
     console.log('✅ User authenticated:', user.first_name, user.last_name);
     console.log('✅ User ID:', user.id);
+    console.log('✅ User hash:', user.hash);
+    
+    showEditor();
     
     // Загружаем ботов
     loadBots().catch(error => {
         console.error('❌ Error loading bots:', error);
+        alert('Ошибка при загрузке ботов: ' + error.message);
     });
+    
+    console.log('✅ ===== AUTHENTICATION COMPLETE =====');
 };
+
+// Проверяем, что функция доступна глобально
+console.log('✅ onTelegramAuth function defined:', typeof window.onTelegramAuth);
 
 function handleLogout() {
     currentUser = null;

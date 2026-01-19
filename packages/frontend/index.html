@@ -63,8 +63,17 @@
         window.addEventListener('DOMContentLoaded', function() {
             const widgetContainer = document.getElementById('telegram-login');
             if (!widgetContainer) {
-                console.error('Telegram login container not found');
+                console.error('❌ Telegram login container not found');
                 return;
+            }
+            
+            console.log('✅ Telegram login container found');
+            
+            // Убеждаемся, что функция onTelegramAuth доступна глобально
+            if (typeof window.onTelegramAuth !== 'function') {
+                console.error('❌ onTelegramAuth function is not defined!');
+            } else {
+                console.log('✅ onTelegramAuth function is available');
             }
             
             // Создаем скрипт с правильными атрибутами
@@ -78,6 +87,7 @@
             
             script.onload = function() {
                 console.log('✅ Telegram Widget script loaded successfully');
+                console.log('✅ Waiting for user to authorize...');
             };
             
             script.onerror = function() {
@@ -86,6 +96,7 @@
             
             // Вставляем скрипт перед контейнером (Telegram Widget создаст iframe внутри контейнера)
             widgetContainer.parentNode.insertBefore(script, widgetContainer);
+            console.log('✅ Telegram Widget script inserted into DOM');
         });
     </script>
 </body>
