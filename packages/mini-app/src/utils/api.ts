@@ -1,7 +1,11 @@
 import { Bot, ApiError } from '../types';
 import { BotSchema } from '@dialogue-constructor/shared';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+// API URL для Mini App - должен быть установлен в переменных окружения Vercel
+// Для production используем production URL core сервиса
+const API_URL = import.meta.env.VITE_API_URL || 'https://lego-bot-core.vercel.app';
+
+console.log('🔗 API URL:', API_URL);
 
 // Получить user_id из Telegram WebApp
 function getUserId(): number | null {
@@ -26,27 +30,54 @@ async function apiRequest<T>(
   const userId = getUserId();
   
   if (!userId) {
+    console.error('❌ User ID not found');
     throw new Error('User ID not found. Make sure you are running in Telegram WebApp.');
   }
 
   const url = `${API_URL}${endpoint}${endpoint.includes('?') ? '&' : '?'}user_id=${userId}`;
   
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+  console.log('📡 API Request:', {
+    method: options?.method || 'GET',
+    url,
+    userId,
   });
 
-  if (!response.ok) {
-    const error: ApiError = await response.json().catch(() => ({
-      error: `HTTP ${response.status}: ${response.statusText}`,
-    }));
-    throw new Error(error.error || error.message || 'API request failed');
-  }
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    });
 
-  return response.json();
+    console.log('📥 API Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok,
+    });
+
+    if (!response.ok) {
+      let errorData: ApiError;
+      try {
+        errorData = await response.json();
+      } catch {
+        errorData = {
+          error: `HTTP ${response.status}: ${response.statusText}`,
+        };
+      }
+      
+      console.error('❌ API Error:', errorData);
+      throw new Error(errorData.error || errorData.message || `API request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('✅ API Success:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ API Request Error:', error);
+    throw error;
+  }
 }
 
 export const api = {

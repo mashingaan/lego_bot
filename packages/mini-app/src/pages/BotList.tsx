@@ -19,11 +19,15 @@ export default function BotList() {
     try {
       setLoading(true);
       setError(null);
+      console.log('🔄 Loading bots...');
       const data = await api.getBots();
+      console.log('✅ Bots loaded:', data);
       setBots(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка загрузки ботов');
-      WebApp?.showAlert(err instanceof Error ? err.message : 'Ошибка загрузки ботов');
+      const errorMessage = err instanceof Error ? err.message : 'Ошибка загрузки ботов';
+      console.error('❌ Error loading bots:', err);
+      setError(errorMessage);
+      WebApp?.showAlert(errorMessage);
     } finally {
       setLoading(false);
     }
