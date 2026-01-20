@@ -390,10 +390,15 @@ if (!botToken) {
         return;
       }
 
-      // Используем production URL для webhook, а не preview URL
-      // VERCEL_URL может указывать на preview deployment, поэтому используем API_URL или hardcode production URL
+      // Всегда используем production URL для webhook
+      // VERCEL_URL может указывать на preview deployment, поэтому игнорируем его
+      // Используем API_URL если установлен, иначе hardcode production URL
       const apiUrl = process.env.API_URL || 'https://lego-bot-core.vercel.app';
       const webhookUrl = `${apiUrl}/api/webhook`;
+      
+      console.log(`🔗 Setting webhook to production URL: ${webhookUrl}`);
+      console.log(`   API_URL env: ${process.env.API_URL || 'not set'}`);
+      console.log(`   VERCEL_URL env: ${process.env.VERCEL_URL || 'not set'} (ignored)`);
 
       const { setWebhook } = await import('./services/telegram-webhook');
       const result = await setWebhook(botToken, webhookUrl);
