@@ -3,15 +3,19 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Логируем сразу в начале - это поможет понять, вызывается ли функция
+  console.log('🚀 Webhook handler called');
+  console.log('Method:', req.method);
+  
   // Только POST запросы
   if (req.method !== 'POST') {
+    console.log('❌ Method not allowed:', req.method);
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
     console.log('📨 Webhook request received');
     console.log('Request method:', req.method);
-    console.log('Request headers:', JSON.stringify(req.headers));
     
     // Импортируем модуль - это инициализирует бота, если еще не инициализирован
     // @ts-ignore - dist файлы могут не иметь типов
