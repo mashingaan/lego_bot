@@ -194,6 +194,15 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req: 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Обработка OPTIONS запросов (CORS preflight) - должен быть после CORS middleware
+app.options('*', (req: Request, res: Response) => {
+  console.log('🔧 CORS preflight request:', req.path);
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.status(200).end();
+});
+
 // Health check
 app.get('/health', async (req: Request, res: Response) => {
   const { getPool } = await import('./db/postgres');
