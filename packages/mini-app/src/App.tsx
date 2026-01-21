@@ -44,23 +44,48 @@ const WebApp = window.Telegram?.WebApp;
 
 function App() {
   useEffect(() => {
-    // Инициализация Telegram WebApp SDK
-    if (WebApp) {
-      WebApp.ready();
-      WebApp.expand();
+    try {
+      console.log('🔧 App useEffect - initializing Telegram WebApp...');
       
-      // Настройка темы
-      if (WebApp.colorScheme === 'dark') {
-        document.documentElement.setAttribute('data-theme', 'dark');
+      // Инициализация Telegram WebApp SDK
+      if (WebApp) {
+        console.log('✅ Telegram WebApp found');
+        WebApp.ready();
+        console.log('✅ WebApp.ready() called');
+        
+        WebApp.expand();
+        console.log('✅ WebApp.expand() called');
+        
+        // Настройка темы
+        if (WebApp.colorScheme === 'dark') {
+          document.documentElement.setAttribute('data-theme', 'dark');
+          console.log('✅ Dark theme applied');
+        }
+        
+        console.log('📱 Telegram WebApp initialized:', {
+          version: WebApp.version,
+          platform: WebApp.platform,
+          colorScheme: WebApp.colorScheme,
+          user: WebApp.initDataUnsafe?.user,
+        });
+      } else {
+        console.warn('⚠️ Telegram WebApp not found');
       }
+    } catch (error) {
+      console.error('❌ Error initializing Telegram WebApp:', error);
     }
   }, []);
 
   // Проверяем, что приложение запущено в Telegram
-  if (!isTelegramWebApp()) {
+  const isInTelegram = isTelegramWebApp();
+  console.log('🔍 Is in Telegram:', isInTelegram);
+  
+  if (!isInTelegram) {
+    console.log('📱 Not in Telegram, showing TelegramOnly component');
     return <TelegramOnly />;
   }
 
+  console.log('✅ Rendering main app');
   return (
     <div className="app">
       <Routes>
