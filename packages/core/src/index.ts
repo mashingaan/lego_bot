@@ -32,24 +32,64 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Initialize database connections
+let dbInitialized = false;
+let dbInitializationPromise: Promise<void> | null = null;
+
 async function initializeDatabases() {
+  if (dbInitialized) {
+    return;
+  }
+  
+  if (dbInitializationPromise) {
+    return dbInitializationPromise;
+  }
+  
+  console.log('🔧 Initializing databases...');
+  dbInitializationPromise = (async () => {
+    try {
+      initPostgres();
+      initRedis();
+      
+      // Инициализация таблицы bots
+      await initializeBotsTable();
+      console.log('✅ Database tables initialized');
+      dbInitialized = true;
+    } catch (error) {
+      console.error('❌ Failed to initialize databases:', error);
+      console.error('Error stack:', error instanceof Error ? error.stack : 'No stack');
+      dbInitializationPromise = null; // Reset to allow retry
+      throw error;
+    }
+  })();
+  
+  return dbInitializationPromise;
+}
+
+// Middleware для проверки инициализации БД
+async function ensureDatabasesInitialized(req: Request, res: Response, next: Function) {
   try {
-    initPostgres();
-    initRedis();
-    
-    // Инициализация таблицы bots
-    await initializeBotsTable();
-    console.log('✅ Database tables initialized');
+    await initializeDatabases();
+    next();
   } catch (error) {
-    console.error('Failed to initialize databases:', error);
-    throw error;
+    console.error('❌ Database initialization error in middleware:', error);
+    res.status(503).json({ 
+      error: 'Service temporarily unavailable',
+      message: 'Database initialization failed',
+      details: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
-// Инициализация БД при запуске
-initializeDatabases().catch((error) => {
-  console.error('Failed to initialize databases:', error);
-});
+// Инициализация БД при запуске (не блокирующая)
+if (process.env.VERCEL !== '1') {
+  // Локально инициализируем сразу
+  initializeDatabases().catch((error) => {
+    console.error('Failed to initialize databases on startup:', error);
+  });
+} else {
+  // На Vercel инициализируем лениво при первом запросе
+  console.log('📦 Vercel environment detected - databases will be initialized on first request');
+}
 
 // CORS configuration
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -165,7 +205,7 @@ async function requireUserId(req: Request, res: Response, next: Function) {
 // API Routes
 
 // GET /api/bots - получить список ботов пользователя
-app.get('/api/bots', requireUserId as any, async (req: Request, res: Response) => {
+app.get('/api/bots', ensureDatabasesInitialized as any, requireUserId as any, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
     console.log('📋 GET /api/bots - userId:', userId);
@@ -196,7 +236,7 @@ app.get('/api/bots', requireUserId as any, async (req: Request, res: Response) =
 });
 
 // GET /api/bot/:id/schema - получить схему бота
-app.get('/api/bot/:id/schema', requireUserId as any, async (req: Request, res: Response) => {
+app.get('/api/bot/:id/schema', ensureDatabasesInitialized as any, requireUserId as any, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
@@ -218,7 +258,7 @@ app.get('/api/bot/:id/schema', requireUserId as any, async (req: Request, res: R
 });
 
 // POST /api/bot/:id/schema - обновить схему бота
-app.post('/api/bot/:id/schema', requireUserId as any, async (req: Request, res: Response) => {
+app.post('/api/bot/:id/schema', ensureDatabasesInitialized as any, requireUserId as any, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
