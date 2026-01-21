@@ -13,21 +13,40 @@ export function initPostgres(): Pool {
     throw new Error('DATABASE_URL is not set in environment variables');
   }
 
+  // Логируем части URL для диагностики (без паролей)
+  try {
+    const url = new URL(connectionString);
+    console.log('🔌 PostgreSQL connection info:');
+    console.log('  Protocol:', url.protocol);
+    console.log('  Host:', url.hostname);
+    console.log('  Port:', url.port || 'default');
+    console.log('  Database:', url.pathname ? url.pathname.substring(1) : 'not specified');
+    console.log('  User:', url.username || 'not specified');
+    console.log('  Password:', url.password ? '***SET***' : 'not set');
+  } catch (e) {
+    console.log('⚠️ Could not parse DATABASE_URL (might be invalid format)');
+  }
+
   pool = new Pool({
     connectionString,
     max: 20,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+    connectionTimeoutMillis: 5000, // Увеличиваем timeout для диагностики
   });
 
   pool.on('error', (err) => {
-    console.error('Unexpected error on idle PostgreSQL client', err);
+    console.error('❌ Unexpected error on idle PostgreSQL client:', err);
+    console.error('Error code:', (err as any).code);
+    console.error('Error message:', err.message);
   });
 
-  // Test connection
+  // Test connection (async, но не блокируем инициализацию)
   pool.query('SELECT NOW()', (err, res) => {
     if (err) {
-      console.error('PostgreSQL connection error:', err);
+      console.error('❌ PostgreSQL connection test error:', err);
+      console.error('Error code:', (err as any).code);
+      console.error('Error message:', err.message);
+      console.error('Error severity:', (err as any).severity);
     } else {
       console.log('✅ PostgreSQL connected successfully');
       console.log('Database time:', res.rows[0].now);
