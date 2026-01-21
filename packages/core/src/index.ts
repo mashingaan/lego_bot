@@ -127,15 +127,24 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const MINI_APP_URL = process.env.MINI_APP_URL || 'https://lego-bot-miniapp.vercel.app';
 const allowedOrigins = [FRONTEND_URL, MINI_APP_URL].filter(Boolean);
 
+console.log('🌐 CORS configuration:');
+console.log('  FRONTEND_URL:', FRONTEND_URL);
+console.log('  MINI_APP_URL:', MINI_APP_URL);
+console.log('  Allowed origins:', allowedOrigins);
+
 app.use(cors({
   origin: (origin, callback) => {
+    console.log('🔍 CORS check - origin:', origin);
     // Разрешаем запросы без origin (например, мобильные приложения, Telegram)
     if (!origin) {
+      console.log('✅ CORS: No origin, allowing');
       return callback(null, true);
     }
     if (allowedOrigins.includes(origin) || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      console.log('✅ CORS: Origin allowed:', origin);
       callback(null, true);
     } else {
+      console.log('✅ CORS: Allowing all origins (permissive mode):', origin);
       callback(null, true); // Разрешаем все для упрощения
     }
   },
@@ -143,6 +152,18 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
+// Логирование всех входящих запросов
+app.use((req: Request, res: Response, next: Function) => {
+  console.log('📨 Incoming request:', {
+    method: req.method,
+    path: req.path,
+    url: req.url,
+    origin: req.headers.origin,
+    'user-agent': req.headers['user-agent']?.substring(0, 50),
+  });
+  next();
+});
 
 // Webhook endpoint для основного бота (должен быть ДО express.json() для raw body)
 // Регистрируем сразу, но обработчик будет работать только если botInstance инициализирован
