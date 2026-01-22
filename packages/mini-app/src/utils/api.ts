@@ -1,11 +1,51 @@
+/**
+ * API Client for Mini-App
+ * 
+ * Environment Detection:
+ * - Local: http://localhost:3000 (when mini-app runs on localhost:5174)
+ * - Production: https://lego-bot-core.vercel.app (when deployed)
+ * 
+ * Testing:
+ * 1. Start core: cd packages/core && npm run dev
+ * 2. Start mini-app: cd packages/mini-app && npm run dev
+ * 3. Open http://localhost:5174 in browser
+ * 4. Check console for "🏠 Local development detected"
+ * 5. Verify API calls go to http://localhost:3000
+ * 
+ * Manual API Testing:
+ * - GET /api/bots: curl "http://localhost:3000/api/bots?user_id=123"
+ * - GET /api/bot/:id/schema: curl "http://localhost:3000/api/bot/BOT_ID/schema?user_id=123"
+ * - POST /api/bot/:id/schema: curl -X POST "http://localhost:3000/api/bot/BOT_ID/schema?user_id=123" \
+ *     -H "Content-Type: application/json" \
+ *     -d '{"version":1,"initialState":"start","states":{"start":{"message":"Test"}}}'
+ */
 import { Bot, ApiError } from '../types';
 import { BotSchema } from '@dialogue-constructor/shared';
 
-// API URL для Mini App - должен быть установлен в переменных окружения Vercel
-// Для production используем production URL core сервиса
-const API_URL = import.meta.env.VITE_API_URL || 'https://lego-bot-core.vercel.app';
+function getApiUrl(): string {
+  const hostname =
+    typeof window !== 'undefined' ? window.location.hostname : '';
 
-console.log('🔗 API URL:', API_URL);
+  const isLocalhost =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '0.0.0.0';
+
+  const isDev = import.meta.env.DEV;
+
+  if (isLocalhost || isDev) {
+    const localUrl =
+      import.meta.env.VITE_API_URL_LOCAL || 'http://localhost:3000';
+    console.log('🏠 Local dev detected, using:', localUrl);
+    return localUrl;
+  }
+
+  const prodUrl =
+    import.meta.env.VITE_API_URL || 'https://lego-bot-core.vercel.app';
+  console.log('🌐 Production mode, using:', prodUrl);
+  return prodUrl;
+}
 
 // Получить user_id из Telegram WebApp
 function getUserId(): number | null {
@@ -34,12 +74,16 @@ async function apiRequest<T>(
     throw new Error('User ID not found. Make sure you are running in Telegram WebApp.');
   }
 
-  const url = `${API_URL}${endpoint}${endpoint.includes('?') ? '&' : '?'}user_id=${userId}`;
+  const apiUrl = getApiUrl();
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : 'unknown';
+  const url = `${apiUrl}${endpoint}${endpoint.includes('?') ? '&' : '?'}user_id=${userId}`;
   
   console.log('📡 API Request:', {
     method: options?.method || 'GET',
     url,
     userId,
+    apiUrl,
+    isLocalhost: hostname,
   });
 
   try {
@@ -57,6 +101,14 @@ async function apiRequest<T>(
       ok: response.ok,
     });
 
+    console.log('📥 Response:', {
+      url: response.url,
+      status: response.status,
+      type: response.type,
+      redirected: response.redirected,
+      contentType: response.headers.get('content-type'),
+    });
+
     if (!response.ok) {
       let errorData: ApiError;
       try {
@@ -68,6 +120,11 @@ async function apiRequest<T>(
       }
       
       console.error('❌ API Error:', errorData);
+      console.error('❌ Response details:', {
+        url: response.url,
+        redirected: response.redirected,
+        type: response.type,
+      });
       throw new Error(errorData.error || errorData.message || `API request failed: ${response.status} ${response.statusText}`);
     }
 
@@ -75,6 +132,12 @@ async function apiRequest<T>(
     console.log('✅ API Success:', data);
     return data;
   } catch (error) {
+    console.error('❌ Request failed:', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      apiUrl,
+      endpoint,
+    });
     console.error('❌ API Request Error:', error);
     throw error;
   }

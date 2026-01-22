@@ -12,7 +12,7 @@ import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { initPostgres, getBotById, closePostgres, getBotSchema } from './db/postgres';
-import { initRedis, closeRedis, getUserState, setUserState, resetUserState } from './db/redis';
+import { initRedis, closeRedis, getUserState, setUserState, resetUserState, getRedisClientOptional } from './db/redis';
 import { decryptToken } from './utils/encryption';
 import { sendTelegramMessage, sendTelegramMessageWithKeyboard, answerCallbackQuery, TelegramUpdate } from './services/telegram';
 import { BotSchema } from '@dialogue-constructor/shared/types/bot-schema';
@@ -25,14 +25,37 @@ console.log('📄 Загрузка .env из:', envPath);
 const app = express();
 // Router должен использовать ROUTER_PORT, чтобы не конфликтовать с core (PORT=3000)
 const PORT = process.env.ROUTER_PORT || 3001;
+let server: ReturnType<typeof app.listen> | null = null;
 
-// Инициализация PostgreSQL
-try {
-  initPostgres();
-  console.log('✅ PostgreSQL pool initialized');
-} catch (error) {
-  console.error('❌ Failed to initialize PostgreSQL:', error);
-  process.exit(1);
+// ????????????? PostgreSQL
+async function startServer() {
+  try {
+    await initPostgres();
+    console.log('? PostgreSQL pool initialized');
+  } catch (error) {
+    console.error('? Failed to initialize PostgreSQL:', error);
+    if (process.env.VERCEL !== '1') {
+      process.exit(1);
+      return;
+    }
+    console.warn('?? PostgreSQL initialization failed, continuing without exit');
+  }
+
+  try {
+    const redisClient = await initRedis();
+    if (redisClient) {
+      console.log('? Redis initialized');
+    } else {
+      console.warn('?? Redis initialization failed, continuing without cache');
+    }
+  } catch (error) {
+    console.warn('?? Redis initialization failed, continuing without cache:', error);
+  }
+
+  server = app.listen(PORT, () => {
+    console.log(`?? Router server is running on port ${PORT}`);
+    console.log(`?? Webhook endpoint: http://localhost:${PORT}/webhook/:botId`);
+  });
 }
 
 // Middleware
@@ -54,23 +77,45 @@ app.use((req: Request, res: Response, next) => {
 
 // Health check
 app.get('/health', async (req: Request, res: Response) => {
+  let postgresState: 'ready' | 'error' = 'error';
+  let redisState: 'ready' | 'error' = 'error';
+
   try {
     const { getPostgresClient } = await import('./db/postgres');
     const client = await getPostgresClient();
     await client.query('SELECT 1');
     client.release();
-
-    res.status(200).json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      service: 'router',
-    });
+    postgresState = 'ready';
   } catch (error) {
-    res.status(503).json({
-      status: 'error',
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
+    postgresState = 'error';
   }
+
+  try {
+    const redisClient = await getRedisClientOptional();
+    if (redisClient) {
+      await redisClient.ping();
+      redisState = 'ready';
+    } else {
+      redisState = 'error';
+    }
+  } catch (error) {
+    redisState = 'error';
+  }
+
+  const status = postgresState === 'ready'
+    ? (redisState === 'ready' ? 'ok' : 'degraded')
+    : 'error';
+  const statusCode = postgresState === 'ready' ? 200 : 503;
+
+  res.status(statusCode).json({
+    status,
+    timestamp: new Date().toISOString(),
+    service: 'router',
+    databases: {
+      postgres: postgresState,
+      redis: redisState,
+    },
+  });
 });
 
 // Webhook endpoint
@@ -275,19 +320,20 @@ app.use((req: Request, res: Response) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-// Запуск сервера
-const server = app.listen(PORT, () => {
-  console.log(`🚀 Router server is running on port ${PORT}`);
-  console.log(`📡 Webhook endpoint: http://localhost:${PORT}/webhook/:botId`);
+// ???????????? ??????????????
+startServer().catch((error) => {
+  console.error('Failed to start router server:', error);
 });
 
 // Graceful shutdown
 async function shutdown() {
   console.log('🛑 Shutting down gracefully...');
   
-  server.close(() => {
-    console.log('✅ HTTP server closed');
-  });
+  if (server) {
+    server.close(() => {
+      console.log('? HTTP server closed');
+    });
+  }
   
   await closePostgres();
   console.log('✅ PostgreSQL pool closed');

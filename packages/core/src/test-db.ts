@@ -15,7 +15,7 @@ async function testConnections() {
   // Test PostgreSQL
   console.log('📊 Testing PostgreSQL connection...');
   try {
-    const pool = initPostgres();
+    const pool = await initPostgres();
     
     // Wait a bit for connection to establish
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -59,7 +59,10 @@ async function testConnections() {
   // Test Redis
   console.log('📦 Testing Redis connection...');
   try {
-    const redis = initRedis();
+    const redis = await initRedis();
+    if (!redis) {
+      throw new Error('Redis client is not initialized');
+    }
     
     // Wait a bit for connection to establish
     await new Promise((resolve) => setTimeout(resolve, 1000));

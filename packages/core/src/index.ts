@@ -34,41 +34,91 @@ const PORT = process.env.PORT || 3000;
 // Initialize database connections
 let dbInitialized = false;
 let dbInitializationPromise: Promise<void> | null = null;
+let redisAvailable = true;
 
 async function initializeDatabases() {
   if (dbInitialized) {
-    console.log('✅ Databases already initialized');
+    console.log('??? Databases already initialized');
     return;
   }
   
   if (dbInitializationPromise) {
-    console.log('⏳ Database initialization in progress, waiting...');
+    console.log('??? Database initialization in progress, waiting...');
     return dbInitializationPromise;
   }
   
-  console.log('🔧 Initializing databases...');
-  console.log('📊 Environment variables:');
+  console.log('???? Initializing databases...');
+  console.log('???? Environment variables:');
   console.log('  DATABASE_URL:', process.env.DATABASE_URL ? `${process.env.DATABASE_URL.substring(0, 20)}...` : 'NOT SET');
   console.log('  REDIS_URL:', process.env.REDIS_URL ? `${process.env.REDIS_URL.substring(0, 20)}...` : 'NOT SET');
   
   dbInitializationPromise = (async () => {
     try {
-      console.log('🔌 Initializing PostgreSQL...');
-      initPostgres();
-      console.log('✅ PostgreSQL initialized');
+      console.log('???? Initializing PostgreSQL...');
+      try {
+        await initPostgres();
+        console.log('??? PostgreSQL initialized');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const postgresError = new Error(`PostgreSQL initialization failed: ${message}`);
+        (postgresError as any).database = 'postgres';
+        throw postgresError;
+      }
       
-      console.log('🔌 Initializing Redis...');
-      initRedis();
-      console.log('✅ Redis initialized');
+      console.log('???? Initializing Redis...');
+      try {
+        const redisClient = await initRedis();
+        if (redisClient) {
+          console.log('??? Redis initialized');
+          redisAvailable = true;
+        } else {
+          redisAvailable = false;
+          console.warn('?????? Redis initialization failed, continuing without cache');
+        }
+      } catch (error) {
+        redisAvailable = false;
+        console.warn('?????? Redis initialization failed, continuing without cache:', error);
+      }
+
+      console.log('???? Validating PostgreSQL connection...');
+      const { getPool } = await import('./db/postgres');
+      const pool = getPool();
+      if (!pool) {
+        const postgresError = new Error('PostgreSQL pool is not initialized');
+        (postgresError as any).database = 'postgres';
+        throw postgresError;
+      }
+
+      try {
+        await pool.query('SELECT 1');
+        console.log('??? PostgreSQL connection verified');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const postgresError = new Error(`PostgreSQL connection validation failed: ${message}`);
+        (postgresError as any).database = 'postgres';
+        throw postgresError;
+      }
+
+      if (redisAvailable) {
+        try {
+          const { getRedisClient } = await import('./db/redis');
+          const redisClient = await getRedisClient();
+          await redisClient.ping();
+          console.log('??? Redis connection verified');
+        } catch (error) {
+          redisAvailable = false;
+          console.warn('?????? Redis ping failed, continuing without cache:', error);
+        }
+      }
       
-      console.log('📋 Initializing bots table...');
-      // Инициализация таблицы bots
+      console.log('???? Initializing bots table...');
+      // ?????????????????????????? ?????????????? bots
       await initializeBotsTable();
-      console.log('✅ Database tables initialized');
+      console.log('??? Database tables initialized');
       dbInitialized = true;
-      console.log('✅ All databases initialized successfully');
+      console.log('??? All databases initialized successfully');
     } catch (error) {
-      console.error('❌ Failed to initialize databases:', error);
+      console.error('??? Failed to initialize databases:', error);
       console.error('Error type:', error?.constructor?.name);
       console.error('Error message:', error instanceof Error ? error.message : String(error));
       console.error('Error stack:', error instanceof Error ? error.stack : 'No stack');
@@ -101,10 +151,12 @@ async function ensureDatabasesInitialized(req: Request, res: Response, next: Fun
     console.log('  REDIS_URL:', process.env.REDIS_URL ? 'SET' : 'NOT SET');
     console.log('  VERCEL:', process.env.VERCEL);
     console.log('  NODE_ENV:', process.env.NODE_ENV);
-    
+    const failedDatabase = (error as any)?.database || 'postgres';
+
     res.status(503).json({ 
       error: 'Service temporarily unavailable',
       message: 'Database initialization failed',
+      database: failedDatabase,
       details: error instanceof Error ? error.message : String(error),
       hint: 'Check Vercel logs for detailed error information',
     });
@@ -125,11 +177,15 @@ if (process.env.VERCEL !== '1') {
 // CORS configuration
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const MINI_APP_URL = process.env.MINI_APP_URL || 'https://lego-bot-miniapp.vercel.app';
-const allowedOrigins = [FRONTEND_URL, MINI_APP_URL].filter(Boolean);
+const MINI_APP_DEV_URL = 'http://localhost:5174';
+const MINI_APP_DEV_URL_127 = 'http://127.0.0.1:5174';
+const allowedOrigins = [FRONTEND_URL, MINI_APP_URL, MINI_APP_DEV_URL, MINI_APP_DEV_URL_127].filter(Boolean);
 
 console.log('🌐 CORS configuration:');
 console.log('  FRONTEND_URL:', FRONTEND_URL);
 console.log('  MINI_APP_URL:', MINI_APP_URL);
+console.log('  MINI_APP_DEV_URL:', MINI_APP_DEV_URL);
+console.log('  MINI_APP_DEV_URL_127:', MINI_APP_DEV_URL_127);
 console.log('  Allowed origins:', allowedOrigins);
 
 app.use(cors({
@@ -167,8 +223,9 @@ app.use((req: Request, res: Response, next: Function) => {
 
 // Webhook endpoint для основного бота (должен быть ДО express.json() для raw body)
 // Регистрируем сразу, но обработчик будет работать только если botInstance инициализирован
-app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
+app.post('/api/webhook', express.raw({ type: 'application/json' }), ensureDatabasesInitialized as any, async (req: Request, res: Response) => {
   try {
+    console.log('✅ Webhook DB initialization complete, processing update');
     // Проверяем, что бот инициализирован
     if (!botInstance) {
       console.error('❌ Bot instance not initialized in webhook handler');
@@ -196,7 +253,12 @@ app.use(express.urlencoded({ extended: true }));
 
 // Обработка OPTIONS запросов (CORS preflight) - должен быть после CORS middleware
 app.options('*', (req: Request, res: Response) => {
-  console.log('🔧 CORS preflight request:', req.path);
+  console.log('🔧 CORS preflight request:', {
+    path: req.path,
+    origin: req.headers.origin,
+    method: req.headers['access-control-request-method'],
+    headers: req.headers['access-control-request-headers'],
+  });
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -206,42 +268,64 @@ app.options('*', (req: Request, res: Response) => {
 // Health check
 app.get('/health', async (req: Request, res: Response) => {
   const { getPool } = await import('./db/postgres');
-  const { getRedisClient } = await import('./db/redis');
+  const { getRedisClientOptional } = await import('./db/redis');
   
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
     databases: {
-      postgres: 'unknown',
-      redis: 'unknown',
+      postgres: 'connecting',
+      redis: 'connecting',
     },
   };
 
-  // Check PostgreSQL
-  try {
-    const pool = getPool();
-    if (pool) {
-      await pool.query('SELECT 1');
-      health.databases.postgres = 'connected';
-    } else {
-      health.databases.postgres = 'not initialized';
+  let postgresState: 'connecting' | 'ready' | 'error' = 'connecting';
+  if (!dbInitialized) {
+    postgresState = dbInitializationPromise ? 'connecting' : 'error';
+  } else {
+    try {
+      const pool = getPool();
+      if (pool) {
+        await pool.query('SELECT 1');
+        postgresState = 'ready';
+      } else {
+        postgresState = 'error';
+      }
+    } catch (error) {
+      postgresState = 'error';
     }
-  } catch (error) {
-    health.databases.postgres = 'error';
-    health.status = 'degraded';
   }
 
-  // Check Redis
-  try {
-    const redis = getRedisClient();
-    await redis.ping();
-    health.databases.redis = 'connected';
-  } catch (error) {
-    health.databases.redis = 'error';
-    health.status = 'degraded';
+  health.databases.postgres = postgresState;
+
+  let redisState: 'connecting' | 'ready' | 'error' = 'connecting';
+  if (!dbInitialized) {
+    redisState = dbInitializationPromise ? 'connecting' : 'error';
+  } else if (!redisAvailable) {
+    redisState = 'error';
+  } else {
+    try {
+      const redisClient = await getRedisClientOptional();
+      if (redisClient) {
+        await redisClient.ping();
+        redisState = 'ready';
+      } else {
+        redisState = 'error';
+      }
+    } catch (error) {
+      redisState = 'error';
+    }
   }
 
-  const statusCode = health.status === 'ok' ? 200 : 503;
+  health.databases.redis = redisState;
+
+  if (postgresState === 'ready') {
+    health.status = redisState === 'ready' ? 'ok' : 'degraded';
+  } else {
+    health.status = 'error';
+  }
+
+  const statusCode = postgresState === 'ready' ? 200 : 503;
   res.status(statusCode).json(health);
 });
 
