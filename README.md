@@ -2,6 +2,22 @@
 
 Telegram-бот для создания и управления диалоговыми бота через веб-интерфейс.
 
+## 🚀 Quick Start
+
+**New to this project?** See [RUNBOOK.md](./RUNBOOK.md) for detailed setup instructions.
+
+**TL;DR:**
+```bash
+npm install
+docker-compose up -d
+cd packages/core && npm run test-db
+cd packages/core && npm run dev        # Terminal 1
+cd packages/router && npm run dev      # Terminal 2
+cd packages/mini-app && npm run dev    # Terminal 3
+```
+
+**Troubleshooting?** Check [RUNBOOK.md - Known Gotchas](./RUNBOOK.md#known-gotchas)
+
 ## 🏗️ Архитектура
 
 Monorepo на npm workspaces + Turbo:
@@ -68,6 +84,8 @@ lego_bot/
 
 ## 🚀 Быстрый старт
 
+> **📖 Полная инструкция:** См. [RUNBOOK.md](./RUNBOOK.md) для подробного руководства по локальной разработке.
+
 ### 1. Установка зависимостей
 
 ```bash
@@ -97,17 +115,20 @@ PORT=3000
 
 ### 3. Запуск локально
 
+Рекомендуемый запуск (core + router + mini-app):
+
 ```bash
 # Запустить PostgreSQL и Redis
 docker-compose up -d
 
-# Запустить core сервер
-cd packages/core && npm run dev
+cd packages/core && npm run dev        # Terminal 1 (http://localhost:3000)
+cd packages/router && npm run dev      # Terminal 2 (http://localhost:3001)
+cd packages/mini-app && npm run dev    # Terminal 3 (http://localhost:5174)
+```
 
-# В другом терминале - запустить router
-cd packages/router && npm run dev
+Legacy/Optional UI (packages/frontend):
 
-# В третьем терминале - запустить frontend (опционально)
+```bash
 cd packages/frontend && python3 -m http.server 8000
 ```
 
