@@ -174,7 +174,12 @@ export const createBotScene = new Scenes.WizardScene<BotWizardContext>(
       let webhookSet = false;
       try {
         console.log(`🔗 Настройка webhook для бота ${bot.id}: ${webhookUrl}`);
-        const webhookResult = await setWebhook(originalToken, webhookUrl); // Используем оригинальный токен для API
+        const webhookResult = await setWebhook(
+          originalToken,
+          webhookUrl,
+          bot.webhook_secret || undefined,
+          ['message', 'callback_query']
+        ); // Используем оригинальный токен для API
         
         if (webhookResult.ok) {
           webhookSet = true;

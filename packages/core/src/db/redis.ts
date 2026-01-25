@@ -1,8 +1,18 @@
 import { createClient, RedisClientType } from 'redis';
+import { CircuitBreaker, CircuitBreakerOpenError } from '@dialogue-constructor/shared';
+import type { Logger } from '@dialogue-constructor/shared';
 
 type AnyRedisClient = RedisClientType<any, any, any>;
 
 let redisClient: AnyRedisClient | null = null;
+let logger: Logger | null = null;
+const redisCircuitBreaker = new CircuitBreaker('redis', {
+  failureThreshold: 3,
+  resetTimeout: 20000,
+  successThreshold: 2,
+});
+
+const redisRetryStats = { success: 0, failure: 0 };
 
 const isVercel = process.env.VERCEL === '1';
 
@@ -13,6 +23,7 @@ const REDIS_RETRY_CONFIG = isVercel
       maxDelayMs: 10000,
       connectTimeoutMs: 5000,
       readyTimeoutMs: 10000,
+      jitterMs: 1000,
     }
   : {
       maxRetries: 5,
@@ -20,6 +31,7 @@ const REDIS_RETRY_CONFIG = isVercel
       maxDelayMs: 10000,
       connectTimeoutMs: 5000,
       readyTimeoutMs: 5000,
+      jitterMs: 2000,
     };
 
 type RedisConnectionInfo = {
@@ -72,14 +84,14 @@ function getRedisState(client: AnyRedisClient | null): string {
 
 function logConnectionError(service: string, error: unknown, context: Record<string, unknown>) {
   const err = error as { code?: string; message?: string; stack?: string };
-  console.error(`${service} connection error`, {
+  logger?.error({
     timestamp: new Date().toISOString(),
     service,
     code: err?.code,
     message: err?.message || String(error),
     stack: err?.stack,
     ...context,
-  });
+  }, `${service} connection error`);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -109,27 +121,39 @@ function attachRedisEventHandlers(client: AnyRedisClient, connectionInfo: RedisC
   });
 
   client.on('connect', () => {
-    console.log('Redis connection state: connecting', {
+    logger?.info({
+      service: 'redis',
+      host: connectionInfo.host,
+      port: connectionInfo.port,
       connection: connectionInfo,
-    });
+    }, 'Redis connection state: connecting');
   });
 
   client.on('ready', () => {
-    console.log('Redis connection state: ready', {
+    logger?.info({
+      service: 'redis',
+      host: connectionInfo.host,
+      port: connectionInfo.port,
       connection: connectionInfo,
-    });
+    }, 'Redis connection state: ready');
   });
 
   client.on('reconnecting', () => {
-    console.log('Redis connection state: reconnecting', {
+    logger?.warn({
+      service: 'redis',
+      host: connectionInfo.host,
+      port: connectionInfo.port,
       connection: connectionInfo,
-    });
+    }, 'Redis connection state: reconnecting');
   });
 
   client.on('end', () => {
-    console.log('Redis connection state: closed', {
+    logger?.info({
+      service: 'redis',
+      host: connectionInfo.host,
+      port: connectionInfo.port,
       connection: connectionInfo,
-    });
+    }, 'Redis connection state: closed');
   });
 }
 
@@ -172,12 +196,16 @@ async function connectRedisWithRetry(
   const startTime = Date.now();
   let delayMs = REDIS_RETRY_CONFIG.initialDelayMs;
 
-  console.log('Redis connection state: connecting', {
+  logger?.info({
+    service: 'redis',
+    host: connectionInfo.host,
+    port: connectionInfo.port,
     connection: connectionInfo,
     maxRetries: REDIS_RETRY_CONFIG.maxRetries,
     connectTimeoutMs: REDIS_RETRY_CONFIG.connectTimeoutMs,
     readyTimeoutMs: REDIS_RETRY_CONFIG.readyTimeoutMs,
-  });
+    jitterMs: REDIS_RETRY_CONFIG.jitterMs,
+  }, 'Redis connection state: connecting');
 
   for (let attempt = 1; attempt <= REDIS_RETRY_CONFIG.maxRetries; attempt++) {
     const attemptStart = Date.now();
@@ -195,18 +223,26 @@ async function connectRedisWithRetry(
         `Redis connect timeout after ${REDIS_RETRY_CONFIG.connectTimeoutMs}ms`
       );
       await waitForRedisReady(client, REDIS_RETRY_CONFIG.readyTimeoutMs);
+      redisRetryStats.success += 1;
       const durationMs = Date.now() - attemptStart;
       const totalDurationMs = Date.now() - startTime;
-      console.log('Redis connection state: ready', {
+      logger?.info({
+        service: 'redis',
+        host: connectionInfo.host,
+        port: connectionInfo.port,
         attempt,
+        duration: durationMs,
         durationMs,
         totalDurationMs,
         connection: connectionInfo,
-      });
+      }, 'Redis connection state: ready');
       return client;
     } catch (error) {
+      redisRetryStats.failure += 1;
       const durationMs = Date.now() - attemptStart;
       const nextDelayMs = Math.min(delayMs, REDIS_RETRY_CONFIG.maxDelayMs);
+      const jitter = Math.random() * REDIS_RETRY_CONFIG.jitterMs;
+      const actualDelayMs = nextDelayMs + jitter;
 
       try {
         await withTimeout(
@@ -219,29 +255,42 @@ async function connectRedisWithRetry(
       }
 
       logConnectionError('redis', error, {
+        service: 'redis',
+        host: connectionInfo.host,
+        port: connectionInfo.port,
         attempt,
+        duration: durationMs,
         durationMs,
         nextDelayMs: attempt < REDIS_RETRY_CONFIG.maxRetries ? nextDelayMs : 0,
+        actualDelayMs: attempt < REDIS_RETRY_CONFIG.maxRetries ? actualDelayMs : 0,
         state: getRedisState(client),
         connection: connectionInfo,
       });
       if (attempt === REDIS_RETRY_CONFIG.maxRetries) {
         const totalDurationMs = Date.now() - startTime;
-        console.warn('Redis connection state: error', {
+        logger?.warn({
+          service: 'redis',
+          host: connectionInfo.host,
+          port: connectionInfo.port,
           attempts: attempt,
+          duration: totalDurationMs,
           totalDurationMs,
           connection: connectionInfo,
-        });
+        }, 'Redis connection state: error');
         throw new Error(
           `Redis connection failed after ${attempt} attempts (${connectionInfo.url})`
         );
       }
-      console.warn('Redis connection retry scheduled', {
+      logger?.warn({
+        service: 'redis',
+        host: connectionInfo.host,
+        port: connectionInfo.port,
         attempt,
         delayMs: nextDelayMs,
+        actualDelayMs,
         connection: connectionInfo,
-      });
-      await sleep(nextDelayMs);
+      }, 'Redis connection retry scheduled');
+      await sleep(actualDelayMs);
       delayMs = Math.min(delayMs * 2, REDIS_RETRY_CONFIG.maxDelayMs);
     }
   }
@@ -251,12 +300,15 @@ async function connectRedisWithRetry(
   );
 }
 
-export async function initRedis(): Promise<AnyRedisClient | null> {
+export async function initRedis(loggerInstance: Logger): Promise<AnyRedisClient | null> {
+  logger = loggerInstance;
+  redisCircuitBreaker.setLogger(loggerInstance);
   if (redisClient && redisClient.isReady) {
     return redisClient;
   }
 
-  console.log('🔧 Redis retry configuration:', {
+  logger?.info({
+    service: 'redis',
     vercel: process.env.VERCEL,
     vercelEnv: process.env.VERCEL_ENV,
     environment: isVercel ? 'Vercel serverless' : 'Local/traditional',
@@ -266,7 +318,7 @@ export async function initRedis(): Promise<AnyRedisClient | null> {
       connectTimeoutMs: REDIS_RETRY_CONFIG.connectTimeoutMs,
       readyTimeoutMs: REDIS_RETRY_CONFIG.readyTimeoutMs,
     },
-  });
+  }, '🔧 Redis retry configuration:');
 
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
   const connectionInfo = getRedisConnectionInfo(redisUrl);
@@ -289,41 +341,60 @@ export async function initRedis(): Promise<AnyRedisClient | null> {
     return redisClient;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn('Redis initialization failed, continuing without cache:', message);
-    console.warn('Redis connection details:', {
+    logger?.warn({
+      service: 'redis',
+      host: connectionInfo.host,
+      port: connectionInfo.port,
+      message,
+    }, 'Redis initialization failed, continuing without cache:');
+    logger?.warn({
+      service: 'redis',
+      host: connectionInfo.host,
+      port: connectionInfo.port,
       connection: connectionInfo,
       state: getRedisState(redisClient),
-    });
+    }, 'Redis connection details:');
     redisClient = null;
     return null;
   }
 }
 
 export async function getRedisClient(): Promise<AnyRedisClient> {
-  if (!redisClient || !redisClient.isReady) {
-    const client = await initRedis();
-    if (client && client.isReady) {
-      return client;
+  return redisCircuitBreaker.execute(async () => {
+    if (!redisClient || !redisClient.isReady) {
+      if (!logger) {
+        throw new Error('Redis logger is not initialized');
+      }
+      const client = await initRedis(logger);
+      if (client && client.isReady) {
+        return client;
+      }
     }
-  }
-  
-  if (!redisClient) {
-    throw new Error('Redis client is not initialized');
-  }
 
-  if (!redisClient.isReady) {
-    throw new Error(
-      `Redis client is not ready (isOpen=${redisClient.isOpen}, isReady=${redisClient.isReady})`
-    );
-  }
+    if (!redisClient) {
+      throw new Error('Redis client is not initialized');
+    }
 
-  return redisClient;
+    if (!redisClient.isReady) {
+      throw new Error(
+        `Redis client is not ready (isOpen=${redisClient.isOpen}, isReady=${redisClient.isReady})`
+      );
+    }
+
+    return redisClient;
+  });
 }
 
 export async function getRedisClientOptional(): Promise<AnyRedisClient | null> {
+  if (redisCircuitBreaker.getState() === 'open') {
+    return null;
+  }
   try {
     return await getRedisClient();
-  } catch {
+  } catch (error) {
+    if (error instanceof CircuitBreakerOpenError) {
+      return null;
+    }
     return null;
   }
 }
@@ -333,4 +404,12 @@ export async function closeRedis(): Promise<void> {
     await redisClient.quit();
     redisClient = null;
   }
+}
+
+export function getRedisCircuitBreakerStats() {
+  return redisCircuitBreaker.getStats();
+}
+
+export function getRedisRetryStats() {
+  return { ...redisRetryStats };
 }

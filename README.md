@@ -1,5 +1,8 @@
 # Dialogue Constructor
 
+[![Tests](https://github.com/mashingaan/lego_bot/actions/workflows/test.yml/badge.svg)](https://github.com/mashingaan/lego_bot/actions/workflows/test.yml)
+[![Coverage](https://codecov.io/gh/mashingaan/lego_bot/branch/main/graph/badge.svg)](https://codecov.io/gh/mashingaan/lego_bot)
+
 Telegram-бот для создания и управления диалоговыми бота через веб-интерфейс.
 
 ## 🚀 Quick Start
@@ -99,6 +102,7 @@ npm install
 ```env
 # Telegram
 TELEGRAM_BOT_TOKEN=your_bot_token_here
+BOT_TOKEN=your_bot_token_here
 
 # Database
 DATABASE_URL=postgresql://postgres:postgres@localhost:5433/dialogue_constructor
@@ -311,6 +315,12 @@ docker-compose up -d
 
 - `POST /webhook/:botId` - webhook от Telegram
 - `GET /health` - проверка работоспособности
+
+## Security
+
+See [SECURITY.md](./SECURITY.md) for details on validation, authentication, encryption, audit logging, and key rotation.
+
+Required security env vars: `ENCRYPTION_KEY`, `BOT_TOKEN`.
 
 ## 🔐 Безопасность
 

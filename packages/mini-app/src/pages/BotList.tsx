@@ -1,14 +1,23 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../utils/api';
-import { Bot } from '../types';
+import { BotSummary } from '../types';
 
 const WebApp = window.Telegram?.WebApp;
 
+type BotsPagination = {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
 export default function BotList() {
   const navigate = useNavigate();
-  const [bots, setBots] = useState<Bot[]>([]);
+  const [bots, setBots] = useState<BotSummary[]>([]);
+  const [pagination, setPagination] = useState<BotsPagination | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -22,7 +31,8 @@ export default function BotList() {
       console.log('🔄 Loading bots...');
       const data = await api.getBots();
       console.log('✅ Bots loaded:', data);
-      setBots(data);
+      setBots(data.bots);
+      setPagination(data.pagination);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Ошибка загрузки ботов';
       console.error('❌ Error loading bots:', err);
@@ -30,6 +40,26 @@ export default function BotList() {
       WebApp?.showAlert(errorMessage);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!pagination || loadingMore) {
+      return;
+    }
+
+    try {
+      setLoadingMore(true);
+      const nextOffset = pagination.offset + pagination.limit;
+      const data = await api.getBots({ offset: nextOffset, limit: pagination.limit });
+      setBots((prev) => [...prev, ...data.bots]);
+      setPagination(data.pagination);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Ошибка загрузки ботов';
+      console.error('❌ Error loading more bots:', err);
+      WebApp?.showAlert(errorMessage);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -123,6 +153,13 @@ export default function BotList() {
           </div>
         </div>
       ))}
+      {pagination?.hasMore ? (
+        <div style={{ marginTop: '16px', textAlign: 'center' }}>
+          <button className="btn btn-primary" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? 'Загрузка...' : 'Показать еще'}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -7,7 +7,9 @@
 
 import { Pool, PoolClient } from 'pg';
 import { getPool, getPostgresClient } from './postgres';
-import { BotSchema } from '@dialogue-constructor/shared';
+import { BotSchema, WEBHOOK_LIMITS } from '@dialogue-constructor/shared';
+import crypto from 'crypto';
+import { logAuditEvent } from './audit-log';
 
 export interface Bot {
   id: string;
@@ -15,6 +17,7 @@ export interface Bot {
   token: string;
   name: string;
   webhook_set: boolean;
+  webhook_secret: string | null;
   schema: BotSchema | null;
   schema_version: number;
   created_at: Date;
@@ -27,21 +30,48 @@ export interface CreateBotData {
   name: string;
 }
 
+export interface AuditContext {
+  requestId?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
 /**
  * Создать бота в базе данных
  */
-export async function createBot(data: CreateBotData): Promise<Bot> {
+export async function createBot(data: CreateBotData, context?: AuditContext): Promise<Bot> {
   const client = await getPostgresClient();
-  
+
+  // Генерация webhook secret
+  const webhookSecret = crypto.randomBytes(WEBHOOK_LIMITS.SECRET_TOKEN_LENGTH).toString('hex');
+
+  // Примечание: `SECRET_TOKEN_LENGTH` здесь фактически означает **байты**, а `.toString('hex')` удваивает длину строки.
+  // Например, 32 байта -> 64 hex-символа. Опции: переименовать в `SECRET_TOKEN_BYTES` или генерировать base64url.
+
   try {
     const result = await client.query<Bot>(
-      `INSERT INTO bots (user_id, token, name, webhook_set, schema, schema_version)
-       VALUES ($1, $2, $3, false, NULL, 0)
-       RETURNING id, user_id, token, name, webhook_set, schema, schema_version, created_at, updated_at`,
-      [data.user_id, data.token, data.name]
+      `INSERT INTO bots (user_id, token, name, webhook_set, schema, schema_version, webhook_secret)
+       VALUES ($1, $2, $3, false, NULL, 0, $4)
+       RETURNING id, user_id, token, name, webhook_set, schema, schema_version, webhook_secret, created_at, updated_at`,
+      [data.user_id, data.token, data.name, webhookSecret]
     );
     
-    return result.rows[0];
+    const bot = result.rows[0];
+    try {
+      await logAuditEvent({
+        userId: data.user_id,
+        requestId: context?.requestId,
+        action: 'create_bot',
+        resourceType: 'bot',
+        resourceId: bot.id,
+        metadata: { name: data.name },
+        ipAddress: context?.ipAddress,
+        userAgent: context?.userAgent,
+      });
+    } catch (error) {
+      console.error('Audit log failed:', error);
+    }
+    return bot;
   } finally {
     client.release();
   }
@@ -59,7 +89,7 @@ export async function getBotsByUserId(userId: number): Promise<Bot[]> {
     
     try {
       const result = await client.query<Bot>(
-        `SELECT id, user_id, token, name, webhook_set, schema, schema_version, created_at, updated_at
+        `SELECT id, user_id, token, name, webhook_set, schema, schema_version, webhook_secret, created_at, updated_at
          FROM bots
          WHERE user_id = $1
          ORDER BY created_at DESC`,
@@ -82,6 +112,76 @@ export async function getBotsByUserId(userId: number): Promise<Bot[]> {
   }
 }
 
+export interface CursorPaginationParams {
+  limit: number;
+  cursor?: string;
+}
+
+export interface PaginatedBots {
+  bots: Bot[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  total?: number;
+}
+
+type BotCursor = { created_at: string; id: string };
+
+function encodeCursor(cursor: BotCursor): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64');
+}
+
+function decodeCursor(cursor?: string): BotCursor | null {
+  if (!cursor) return null;
+  try {
+    return JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) as BotCursor;
+  } catch {
+    return null;
+  }
+}
+
+export async function getBotsByUserIdPaginated(
+  userId: number,
+  params: CursorPaginationParams
+): Promise<PaginatedBots> {
+  const client = await getPostgresClient();
+
+  try {
+    const limit = Math.min(Math.max(params.limit, 1), 100);
+    const decoded = decodeCursor(params.cursor);
+
+    const values: any[] = [userId, limit + 1];
+    let where = 'WHERE user_id = $1';
+
+    if (decoded) {
+      values.push(decoded.created_at, decoded.id);
+      where += ' AND (created_at, id) < ($3, $4)';
+    }
+
+    const result = await client.query<Bot>(
+      `SELECT id, user_id, token, name, webhook_set, schema, schema_version, webhook_secret, created_at, updated_at
+       FROM bots
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $2`,
+      values
+    );
+
+    const rows = result.rows;
+    const hasMore = rows.length > limit;
+    const bots = hasMore ? rows.slice(0, limit) : rows;
+
+    const last = bots[bots.length - 1];
+    const nextCursor =
+      hasMore && last
+        ? encodeCursor({ created_at: String((last as any).created_at), id: String((last as any).id) })
+        : null;
+
+    return { bots, nextCursor, hasMore };
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Получить бота по ID
  */
@@ -90,7 +190,7 @@ export async function getBotById(botId: string, userId: number): Promise<Bot | n
   
   try {
     const result = await client.query<Bot>(
-      `SELECT id, user_id, token, name, webhook_set, schema, schema_version, created_at, updated_at
+      `SELECT id, user_id, token, name, webhook_set, schema, schema_version, webhook_secret, created_at, updated_at
        FROM bots
        WHERE id = $1 AND user_id = $2`,
       [botId, userId]
@@ -121,9 +221,70 @@ export async function botExistsByToken(token: string): Promise<boolean> {
 }
 
 /**
+ * Получить бота по webhook_secret
+ */
+export async function getBotByWebhookSecret(webhookSecret: string): Promise<Bot | null> {
+  const client = await getPostgresClient();
+  
+  try {
+    const result = await client.query<Bot>(
+      `SELECT id, user_id, token, name, webhook_set, schema, schema_version, webhook_secret, created_at, updated_at
+       FROM bots
+       WHERE webhook_secret = $1`,
+      [webhookSecret]
+    );
+    
+    return result.rows[0] || null;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Получить бота по ID без проверки пользователя
+ */
+export async function getBotByIdAnyUser(botId: string): Promise<Bot | null> {
+  const client = await getPostgresClient();
+
+  try {
+    const result = await client.query<Bot>(
+      `SELECT id, user_id, token, name, webhook_set, schema, schema_version, webhook_secret, created_at, updated_at
+       FROM bots
+       WHERE id = $1`,
+      [botId]
+    );
+
+    return result.rows[0] || null;
+  } finally {
+    client.release();
+  }
+}
+
+export async function setBotWebhookSecret(
+  botId: string,
+  userId: number,
+  webhookSecret: string
+): Promise<boolean> {
+  const client = await getPostgresClient();
+
+  try {
+    const result = await client.query(
+      `UPDATE bots
+       SET webhook_secret = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND user_id = $3`,
+      [webhookSecret, botId, userId]
+    );
+
+    return result.rowCount ? result.rowCount > 0 : false;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Удалить бота
  */
-export async function deleteBot(botId: string, userId: number): Promise<boolean> {
+export async function deleteBot(botId: string, userId: number, context?: AuditContext): Promise<boolean> {
   const client = await getPostgresClient();
   
   try {
@@ -132,7 +293,24 @@ export async function deleteBot(botId: string, userId: number): Promise<boolean>
       [botId, userId]
     );
     
-    return result.rowCount ? result.rowCount > 0 : false;
+    const deleted = result.rowCount ? result.rowCount > 0 : false;
+    if (deleted) {
+      try {
+        await logAuditEvent({
+          userId,
+          requestId: context?.requestId,
+          action: 'delete_bot',
+          resourceType: 'bot',
+          resourceId: botId,
+          metadata: null,
+          ipAddress: context?.ipAddress,
+          userAgent: context?.userAgent,
+        });
+      } catch (error) {
+        console.error('Audit log failed:', error);
+      }
+    }
+    return deleted;
   } finally {
     client.release();
   }
@@ -168,7 +346,8 @@ export async function updateWebhookStatus(
 export async function updateBotSchema(
   botId: string,
   userId: number,
-  schema: BotSchema
+  schema: BotSchema,
+  context?: AuditContext
 ): Promise<boolean> {
   const client = await getPostgresClient();
   
@@ -180,7 +359,24 @@ export async function updateBotSchema(
       [JSON.stringify(schema), botId, userId]
     );
     
-    return result.rowCount ? result.rowCount > 0 : false;
+    const updated = result.rowCount ? result.rowCount > 0 : false;
+    if (updated) {
+      try {
+        await logAuditEvent({
+          userId,
+          requestId: context?.requestId,
+          action: 'update_schema',
+          resourceType: 'schema',
+          resourceId: botId,
+          metadata: { statesCount: Object.keys(schema.states || {}).length },
+          ipAddress: context?.ipAddress,
+          userAgent: context?.userAgent,
+        });
+      } catch (error) {
+        console.error('Audit log failed:', error);
+      }
+    }
+    return updated;
   } finally {
     client.release();
   }
@@ -233,6 +429,44 @@ COMMENT ON COLUMN bots.schema_version IS 'Версия схемы для кон�
 -- Индекс для поиска по schema (GIN индекс для JSONB)
 CREATE INDEX IF NOT EXISTS idx_bots_schema ON bots USING GIN (schema);
 `,
+  '004_add_webhook_secret': `
+-- Добавление поля webhook_secret для валидации webhook'ов
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS webhook_secret VARCHAR(64) DEFAULT NULL;
+
+-- Индекс для быстрого поиска по webhook_secret
+CREATE INDEX IF NOT EXISTS idx_bots_webhook_secret ON bots(webhook_secret);
+
+COMMENT ON COLUMN bots.webhook_secret IS 'Secret token для валидации webhook запросов от Telegram';
+`,
+  '005_optimize_indexes': `
+-- Индекс для списка ботов пользователя (ускоряет getBotsByUserId* + сортировку по created_at)
+-- Примечание: (id) уже индексирован как PK, поэтому отдельные индексы на id и (id, user_id) обычно избыточны.
+CREATE INDEX IF NOT EXISTS idx_bots_user_id_created_at ON bots(user_id, created_at DESC, id DESC);
+
+-- (Опционально) добавлять только если реально есть запросы с фильтром по schema:
+--   WHERE user_id = $1 AND schema IS NOT NULL
+-- Тогда индекс должен соответствовать этому фильтру:
+-- CREATE INDEX IF NOT EXISTS idx_bots_user_id_with_schema ON bots(user_id) WHERE schema IS NOT NULL;
+`,
+  '006_create_audit_logs': `
+-- Создание таблицы audit_logs
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id BIGINT NOT NULL,
+    request_id TEXT, -- correlation id (например req.id из логгера)
+    action VARCHAR(50) NOT NULL, -- 'create_bot', 'delete_bot', 'update_schema'
+    resource_type VARCHAR(50) NOT NULL, -- 'bot', 'schema'
+    resource_id UUID,
+    metadata JSONB, -- ограничивать размер на уровне кода (например <= 4KB после JSON.stringify)
+    ip_address INET,
+    user_agent TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_request_id ON audit_logs(request_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+`,
 };
 
 /**
@@ -249,6 +483,9 @@ export async function initializeBotsTable(): Promise<void> {
     '001_create_bots_table',
     '002_add_webhook_set_column',
     '003_add_schema_fields',
+    '004_add_webhook_secret',
+    '005_optimize_indexes',
+    '006_create_audit_logs',
   ];
   
   for (const migrationKey of migrationKeys) {

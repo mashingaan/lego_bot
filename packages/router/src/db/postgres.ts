@@ -1,15 +1,35 @@
 import { Pool, PoolClient } from 'pg';
+import { CircuitBreaker, CircuitBreakerOpenError, recordCacheHit, recordCacheMiss } from '@dialogue-constructor/shared';
+import type { Logger } from '@dialogue-constructor/shared';
+import type { LoggerLike } from '@dialogue-constructor/shared/cache/bot-schema-cache';
 
 let pool: Pool | null = null;
+let logger: Logger | null = null;
 const isVercel = process.env.VERCEL === '1';
 
+const postgresCircuitBreaker = new CircuitBreaker('postgres', {
+  failureThreshold: 5,
+  resetTimeout: 30000,
+  successThreshold: 2,
+  isFailure: (error: unknown) => {
+    const err = error as { code?: string; message?: string };
+    const code = err?.code || '';
+    const message = err?.message || '';
+    return /ECONNREFUSED|ETIMEDOUT|ECONNRESET|EPIPE|ENOTFOUND|EAI_AGAIN/i.test(code + message);
+  },
+});
+
+const postgresRetryStats = { success: 0, failure: 0 };
+
 import { BotSchema } from '@dialogue-constructor/shared/types/bot-schema';
+import { getCachedBotSchema, setCachedBotSchema } from './redis';
 
 export interface Bot {
   id: string;
   user_id: number;
   token: string;
   name: string;
+  webhook_secret: string | null;
   schema: BotSchema | null;
   schema_version: number;
   created_at: Date;
@@ -21,11 +41,13 @@ const POSTGRES_RETRY_CONFIG = isVercel
       maxRetries: 7,
       initialDelayMs: 500,
       maxDelayMs: 15000,
+      jitterMs: 1000,
     }
   : {
       maxRetries: 5,
       initialDelayMs: 1000,
       maxDelayMs: 10000,
+      jitterMs: 2000,
     };
 
 type PostgresConnectionInfo = {
@@ -58,14 +80,14 @@ function formatPostgresConnectionInfo(connectionInfo: PostgresConnectionInfo | n
 
 function logConnectionError(service: string, error: unknown, context: Record<string, unknown>) {
   const err = error as { code?: string; message?: string; stack?: string };
-  console.error(`${service} connection error`, {
+  logger?.error({
     timestamp: new Date().toISOString(),
     service,
     code: err?.code,
     message: err?.message || String(error),
     stack: err?.stack,
     ...context,
-  });
+  }, `${service} connection error`);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -79,58 +101,78 @@ async function connectWithRetry(
   const startTime = Date.now();
   let delayMs = POSTGRES_RETRY_CONFIG.initialDelayMs;
 
-  console.log('PostgreSQL connection state: connecting', {
+  logger?.info({
+    service: 'postgres',
+    operation: 'connect',
     connection: connectionInfo,
     environment: isVercel ? 'Vercel serverless' : 'Local/traditional',
     maxRetries: POSTGRES_RETRY_CONFIG.maxRetries,
     initialDelayMs: POSTGRES_RETRY_CONFIG.initialDelayMs,
     maxDelayMs: POSTGRES_RETRY_CONFIG.maxDelayMs,
-  });
+    jitterMs: POSTGRES_RETRY_CONFIG.jitterMs,
+  }, 'PostgreSQL connection state: connecting');
 
   for (let attempt = 1; attempt <= POSTGRES_RETRY_CONFIG.maxRetries; attempt++) {
     const attemptStart = Date.now();
     const attemptStartedAt = new Date(attemptStart).toISOString();
     try {
       const result = await activePool.query('SELECT NOW()');
+      postgresRetryStats.success += 1;
       const durationMs = Date.now() - attemptStart;
       const totalDurationMs = Date.now() - startTime;
-      console.log('PostgreSQL connection state: connected', {
+      logger?.info({
+        service: 'postgres',
+        operation: 'connect',
         attempt,
         attemptStartedAt,
+        duration: durationMs,
         durationMs,
         totalDurationMs,
         databaseTime: result.rows?.[0]?.now,
         connection: connectionInfo,
-      });
+      }, 'PostgreSQL connection state: connected');
       return;
     } catch (error) {
+      postgresRetryStats.failure += 1;
       const durationMs = Date.now() - attemptStart;
       const nextDelayMs = Math.min(delayMs, POSTGRES_RETRY_CONFIG.maxDelayMs);
+      const jitter = Math.random() * POSTGRES_RETRY_CONFIG.jitterMs;
+      const actualDelayMs = nextDelayMs + jitter;
       logConnectionError('postgres', error, {
+        service: 'postgres',
+        operation: 'connect',
         attempt,
         attemptStartedAt,
+        duration: durationMs,
         durationMs,
         nextDelayMs: attempt < POSTGRES_RETRY_CONFIG.maxRetries ? nextDelayMs : 0,
+        actualDelayMs: attempt < POSTGRES_RETRY_CONFIG.maxRetries ? actualDelayMs : 0,
         connection: connectionInfo,
       });
       if (attempt === POSTGRES_RETRY_CONFIG.maxRetries) {
         const totalDurationMs = Date.now() - startTime;
-        console.error('PostgreSQL connection state: error', {
+        logger?.error({
+          service: 'postgres',
+          operation: 'connect',
           attempts: attempt,
+          duration: totalDurationMs,
           totalDurationMs,
           connection: connectionInfo,
-        });
+        }, 'PostgreSQL connection state: error');
         throw new Error(
           `PostgreSQL connection failed after ${attempt} attempts (${formatPostgresConnectionInfo(connectionInfo)})`
         );
       }
-      console.warn('PostgreSQL connection retry scheduled', {
+      logger?.warn({
+        service: 'postgres',
+        operation: 'connect',
         attempt,
         attemptStartedAt,
         delayMs: nextDelayMs,
+        actualDelayMs,
         connection: connectionInfo,
-      });
-      await sleep(nextDelayMs);
+      }, 'PostgreSQL connection retry scheduled');
+      await sleep(actualDelayMs);
       delayMs = Math.min(delayMs * 2, POSTGRES_RETRY_CONFIG.maxDelayMs);
     }
   }
@@ -139,7 +181,9 @@ async function connectWithRetry(
 /**
  * Инициализация пула подключений PostgreSQL
  */
-export async function initPostgres(): Promise<Pool> {
+export async function initPostgres(loggerInstance: Logger): Promise<Pool> {
+  logger = loggerInstance;
+  postgresCircuitBreaker.setLogger(loggerInstance);
   if (pool) {
     return pool;
   }
@@ -151,18 +195,20 @@ export async function initPostgres(): Promise<Pool> {
   }
 
   const poolConfig = isVercel
-    ? { max: 3, idleTimeoutMillis: 5000, connectionTimeoutMillis: 15000 }
+    ? { max: 2, idleTimeoutMillis: 1000, connectionTimeoutMillis: 3000 }
     : { max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 };
 
   const { max, idleTimeoutMillis, connectionTimeoutMillis } = poolConfig;
-  console.log('🔧 PostgreSQL pool configuration:', {
+  logger?.info({
+    service: 'postgres',
+    operation: 'init',
     hasDatabaseUrl: Boolean(connectionString),
     vercel: process.env.VERCEL,
     environment: isVercel ? 'Vercel serverless' : 'Local/traditional',
     vercelEnv: process.env.VERCEL_ENV,
     poolConfig: { max, idleTimeoutMillis, connectionTimeoutMillis },
     attachDatabasePool: false,
-  });
+  }, '🔧 PostgreSQL pool configuration:');
 
   const connectionInfo = getPostgresConnectionInfo(connectionString);
 
@@ -173,6 +219,8 @@ export async function initPostgres(): Promise<Pool> {
 
   candidatePool.on('error', (err) => {
     logConnectionError('postgres', err, {
+      service: 'postgres',
+      operation: 'pool_error',
       event: 'idle_client_error',
       connection: connectionInfo,
     });
@@ -185,6 +233,8 @@ export async function initPostgres(): Promise<Pool> {
       await candidatePool.end();
     } catch (endError) {
       logConnectionError('postgres', endError, {
+        service: 'postgres',
+        operation: 'pool_end',
         event: 'pool_end_error',
         connection: connectionInfo,
       });
@@ -204,7 +254,10 @@ export async function getPostgresClient(): Promise<PoolClient> {
   const connectionInfo = connectionString ? getPostgresConnectionInfo(connectionString) : null;
 
   if (!pool) {
-    await initPostgres();
+    if (!logger) {
+      throw new Error('PostgreSQL logger is not initialized');
+    }
+    await initPostgres(logger);
   }
   
   if (!pool) {
@@ -218,9 +271,15 @@ export async function getPostgresClient(): Promise<PoolClient> {
   }
 
   try {
-    return await pool.connect();
+    return await postgresCircuitBreaker.execute(() => pool.connect());
   } catch (error) {
+    if (error instanceof CircuitBreakerOpenError) {
+      logger?.warn({ service: 'postgres', operation: 'connect' }, 'PostgreSQL circuit breaker open');
+      throw new Error('PostgreSQL is temporarily unavailable (circuit breaker open)');
+    }
     logConnectionError('postgres', error, {
+      service: 'postgres',
+      operation: 'connect',
       action: 'connect',
       connection: connectionInfo,
     });
@@ -236,13 +295,40 @@ export async function getPostgresClient(): Promise<PoolClient> {
  */
 export async function getBotById(botId: string): Promise<Bot | null> {
   const client = await getPostgresClient();
+  logger?.debug({ service: 'postgres', operation: 'getBotById', botId }, 'PostgreSQL query');
   
   try {
     const result = await client.query<Bot>(
-      `SELECT id, user_id, token, name, schema, schema_version, created_at, updated_at
+      `SELECT id, user_id, token, name, schema, schema_version, webhook_secret, created_at, updated_at
        FROM bots
        WHERE id = $1`,
       [botId]
+    );
+    
+    return result.rows[0] || null;
+  } catch (error) {
+    logger?.error(
+      { service: 'postgres', operation: 'getBotById', botId, error },
+      'PostgreSQL query failed'
+    );
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Получить бота по webhook_secret
+ */
+export async function getBotByWebhookSecret(webhookSecret: string): Promise<Bot | null> {
+  const client = await getPostgresClient();
+  
+  try {
+    const result = await client.query<Bot>(
+      `SELECT id, user_id, token, name, webhook_set, schema, schema_version, webhook_secret, created_at, updated_at
+       FROM bots
+       WHERE webhook_secret = $1`,
+      [webhookSecret]
     );
     
     return result.rows[0] || null;
@@ -254,9 +340,24 @@ export async function getBotById(botId: string): Promise<Bot | null> {
 /**
  * Получить схему бота
  */
-export async function getBotSchema(botId: string): Promise<BotSchema | null> {
+export async function getBotSchema(botId: string, logger?: LoggerLike): Promise<BotSchema | null> {
+  const cached = await getCachedBotSchema(botId, logger);
+  if (cached) {
+    recordCacheHit('schema');
+    logger?.debug?.({ service: 'postgres', operation: 'getBotSchema', botId, source: 'cache' }, 'Schema from cache');
+    return cached.schema;
+  }
+
+  recordCacheMiss('schema');
+  logger?.debug?.({ service: 'postgres', operation: 'getBotSchema', botId, source: 'database' }, 'Schema from database');
   const bot = await getBotById(botId);
-  return bot?.schema || null;
+  const schema = bot?.schema || null;
+
+  if (schema) {
+    await setCachedBotSchema(botId, { schema, schema_version: bot!.schema_version }, logger);
+  }
+
+  return schema;
 }
 
 /**
@@ -267,4 +368,23 @@ export function closePostgres(): Promise<void> {
     return pool.end();
   }
   return Promise.resolve();
+}
+
+export function getPoolStats() {
+  if (!pool) {
+    return { totalCount: 0, idleCount: 0, waitingCount: 0 };
+  }
+  return {
+    totalCount: (pool as any).totalCount ?? 0,
+    idleCount: (pool as any).idleCount ?? 0,
+    waitingCount: (pool as any).waitingCount ?? 0,
+  };
+}
+
+export function getPostgresCircuitBreakerStats() {
+  return postgresCircuitBreaker.getStats();
+}
+
+export function getPostgresRetryStats() {
+  return { ...postgresRetryStats };
 }

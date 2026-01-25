@@ -18,7 +18,11 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "express-async-errors": "^3.1.1",
+    "express-rate-limit": "^7.1.5",
+    "pino-http": "^9.0.0",
     "pg": "^8.11.3",
+    "rate-limit-redis": "^4.2.0",
     "redis": "^4.6.10",
     "telegraf": "^4.14.0"
   },

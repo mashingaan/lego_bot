@@ -1,5 +1,7 @@
 import axios from 'axios';
 import { BotSchema } from '@dialogue-constructor/shared/types/bot-schema';
+import { sanitizeHtml } from '@dialogue-constructor/shared';
+import type { Logger } from '@dialogue-constructor/shared';
 
 const TELEGRAM_API_BASE_URL = 'https://api.telegram.org/bot';
 
@@ -42,16 +44,20 @@ export interface TelegramUpdate {
  * Отправка сообщения через Telegram Bot API
  */
 export async function sendTelegramMessage(
+  logger: Logger,
   botToken: string,
   chatId: number,
   text: string
 ): Promise<void> {
+  const startTime = Date.now();
+  const sanitizedText = sanitizeHtml(text);
+  logger.debug({ chatId, textLength: sanitizedText.length }, 'Sending Telegram message');
   try {
     const url = `${TELEGRAM_API_BASE_URL}${botToken}/sendMessage`;
     
     const response = await axios.post(url, {
       chat_id: chatId,
-      text: text,
+      text: sanitizedText,
       parse_mode: 'HTML',
     }, {
       timeout: 10000,
@@ -60,11 +66,24 @@ export async function sendTelegramMessage(
     if (!response.data.ok) {
       throw new Error(`Telegram API error: ${response.data.description}`);
     }
+
+    logger.info(
+      { chatId, messageId: response.data?.result?.message_id, duration: Date.now() - startTime },
+      'Telegram message sent'
+    );
   } catch (error) {
     if (axios.isAxiosError(error)) {
+      logger.error(
+        { chatId, error: error.message, statusCode: error.response?.status },
+        'Telegram API error'
+      );
       const errorMessage = error.response?.data?.description || error.message;
       throw new Error(`Failed to send Telegram message: ${errorMessage}`);
     }
+    logger.error(
+      { chatId, error: error instanceof Error ? error.message : String(error) },
+      'Telegram API error'
+    );
     throw error;
   }
 }
@@ -73,11 +92,15 @@ export async function sendTelegramMessage(
  * Отправить сообщение с inline клавиатурой
  */
 export async function sendTelegramMessageWithKeyboard(
+  logger: Logger,
   botToken: string,
   chatId: number,
   text: string,
   buttons: Array<{ text: string; nextState: string }>
 ): Promise<any> {
+  const startTime = Date.now();
+  const sanitizedText = sanitizeHtml(text);
+  logger.debug({ chatId, textLength: sanitizedText.length }, 'Sending Telegram message');
   const url = `${TELEGRAM_API_BASE_URL}${botToken}/sendMessage`;
   
   // Преобразуем кнопки в формат Telegram InlineKeyboardMarkup
@@ -94,7 +117,7 @@ export async function sendTelegramMessageWithKeyboard(
   try {
     const response = await axios.post(url, {
       chat_id: chatId,
-      text: text,
+      text: sanitizedText,
       parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: keyboard,
@@ -106,13 +129,26 @@ export async function sendTelegramMessageWithKeyboard(
     if (!response.data.ok) {
       throw new Error(`Telegram API error: ${response.data.description}`);
     }
+
+    logger.info(
+      { chatId, messageId: response.data?.result?.message_id, duration: Date.now() - startTime },
+      'Telegram message sent'
+    );
     
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error)) {
+      logger.error(
+        { chatId, error: error.message, statusCode: error.response?.status },
+        'Telegram API error'
+      );
       const errorMessage = error.response?.data?.description || error.message;
       throw new Error(`Failed to send Telegram message with keyboard: ${errorMessage}`);
     }
+    logger.error(
+      { chatId, error: error instanceof Error ? error.message : String(error) },
+      'Telegram API error'
+    );
     throw error;
   }
 }
@@ -121,6 +157,7 @@ export async function sendTelegramMessageWithKeyboard(
  * Ответить на callback_query
  */
 export async function answerCallbackQuery(
+  logger: Logger,
   botToken: string,
   callbackQueryId: string,
   text?: string
@@ -152,7 +189,10 @@ export async function answerCallbackQuery(
 /**
  * Получение информации о боте
  */
-export async function getBotInfo(botToken: string): Promise<any> {
+export async function getBotInfo(
+  logger: Logger,
+  botToken: string
+): Promise<any> {
   try {
     const url = `${TELEGRAM_API_BASE_URL}${botToken}/getMe`;
     

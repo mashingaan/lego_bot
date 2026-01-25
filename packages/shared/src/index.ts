@@ -1,6 +1,14 @@
 // Shared types and utilities
 
+export * from './logger';
+export * from './middleware';
+export * from './constants/limits';
 export * from './types/bot-schema';
+export * from './utils/circuit-breaker';
+export * from './utils/graceful-degradation';
+export * from './utils/sanitize';
+export * from './utils/telegram-auth';
+export * from './validation/schemas';
 
 export interface User {
   id: number;

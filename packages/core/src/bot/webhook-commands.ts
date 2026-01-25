@@ -1,5 +1,7 @@
+import crypto from 'crypto';
+import { WEBHOOK_LIMITS } from '@dialogue-constructor/shared';
 import { Context } from 'telegraf';
-import { getBotById, updateWebhookStatus } from '../db/bots';
+import { getBotById, setBotWebhookSecret, updateWebhookStatus } from '../db/bots';
 import { decryptToken } from '../utils/encryption';
 import { setWebhook, deleteWebhook } from '../services/telegram-webhook';
 import { getBackButtonKeyboard } from './keyboards';
@@ -36,7 +38,7 @@ export async function handleSetWebhook(ctx: Context, botId?: string) {
     
     if (!bot) {
       await ctx.reply(
-        `❌ Бот с ID <code>${botId}</code> не найден или не принадлежит вам.`,
+        '❌ Бот не найден или webhook secret не настроен',
         {
           parse_mode: 'HTML',
           reply_markup: getBackButtonKeyboard(),
@@ -73,6 +75,16 @@ export async function handleSetWebhook(ctx: Context, botId?: string) {
     }
 
     // Получаем URL роутера для webhook
+    let secretToken = bot.webhook_secret;
+    if (!secretToken) {
+      const generatedSecret = crypto.randomBytes(WEBHOOK_LIMITS.SECRET_TOKEN_LENGTH).toString('hex');
+      const updated = await setBotWebhookSecret(bot.id, userId, generatedSecret);
+      if (!updated) {
+        throw new Error('Failed to set webhook secret');
+      }
+      secretToken = generatedSecret;
+    }
+
     const routerUrl = process.env.ROUTER_URL || process.env.WEBHOOK_URL || 'http://localhost:3001';
     const webhookUrl = `${routerUrl}/webhook/${bot.id}`;
 
@@ -81,7 +93,7 @@ export async function handleSetWebhook(ctx: Context, botId?: string) {
 
     // Устанавливаем webhook через Telegram API
     try {
-      const result = await setWebhook(decryptedToken, webhookUrl);
+      const result = await setWebhook(decryptedToken, webhookUrl, secretToken, ['message', 'callback_query']);
       
       if (result.ok) {
         // Обновляем статус в базе данных

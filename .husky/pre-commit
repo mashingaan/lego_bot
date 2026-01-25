@@ -1,0 +1,101 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+node - <<'NODE'
+const { execFileSync } = require('child_process');
+const { TextDecoder } = require('util');
+
+const decoder = new TextDecoder('utf-8', { fatal: true });
+
+const files = execFileSync(
+  'git',
+  ['diff', '--cached', '--name-only', '--diff-filter=ACM'],
+  { encoding: 'utf8' }
+)
+  .split(/\r?\n/)
+  .map((file) => file.trim())
+  .filter(Boolean);
+
+const binaryExtensions = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.ico',
+  '.pdf',
+  '.zip',
+  '.gz',
+  '.tgz',
+  '.tar',
+  '.7z',
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.eot',
+  '.mp3',
+  '.mp4',
+  '.mov',
+  '.avi',
+  '.mkv',
+]);
+
+function extOf(file) {
+  const idx = file.lastIndexOf('.');
+  return idx === -1 ? '' : file.slice(idx).toLowerCase();
+}
+
+function hasUtf16Bom(buf) {
+  return (
+    buf.length >= 2
+    && ((buf[0] === 0xff && buf[1] === 0xfe) || (buf[0] === 0xfe && buf[1] === 0xff))
+  );
+}
+
+function hasUtf32Bom(buf) {
+  return (
+    buf.length >= 4
+    && (
+      (buf[0] === 0xff && buf[1] === 0xfe && buf[2] === 0x00 && buf[3] === 0x00)
+      || (buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0xfe && buf[3] === 0xff)
+    )
+  );
+}
+
+const errors = [];
+
+for (const file of files) {
+  const ext = extOf(file);
+  if (binaryExtensions.has(ext)) {
+    continue;
+  }
+
+  let buf;
+  try {
+    buf = execFileSync('git', ['show', `:${file}`]);
+  } catch {
+    continue;
+  }
+
+  if (hasUtf16Bom(buf) || hasUtf32Bom(buf)) {
+    errors.push(`${file}: looks like UTF-16/UTF-32 (BOM detected). Save as UTF-8.`);
+    continue;
+  }
+
+  try {
+    decoder.decode(buf);
+  } catch {
+    errors.push(`${file}: not valid UTF-8. Save as UTF-8.`);
+  }
+}
+
+if (errors.length > 0) {
+  console.error('UTF-8 encoding check failed:');
+  for (const error of errors) {
+    console.error(`- ${error}`);
+  }
+  process.exit(1);
+}
+NODE
+
+npx lint-staged

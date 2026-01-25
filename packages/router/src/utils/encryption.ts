@@ -14,7 +14,8 @@ export function encryptToken(token: string, encryptionKey: string): string {
   }
 
   // Создаем ключ из encryptionKey
-  const key = crypto.scryptSync(encryptionKey, 'salt', 32);
+  const salt = crypto.randomBytes(SALT_LENGTH);
+  const key = crypto.scryptSync(encryptionKey, salt, 32);
   const iv = crypto.randomBytes(IV_LENGTH);
   
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -24,8 +25,8 @@ export function encryptToken(token: string, encryptionKey: string): string {
   
   const tag = cipher.getAuthTag();
   
-  // Формат: iv:tag:encrypted
-  return iv.toString('hex') + ':' + tag.toString('hex') + ':' + encrypted;
+  // Формат: salt:iv:tag:encrypted
+  return salt.toString('hex') + ':' + iv.toString('hex') + ':' + tag.toString('hex') + ':' + encrypted;
 }
 
 /**
@@ -38,15 +39,18 @@ export function decryptToken(encryptedToken: string, encryptionKey: string): str
 
   try {
     const parts = encryptedToken.split(':');
-    if (parts.length !== 3) {
+    if (parts.length !== 3 && parts.length !== 4) {
       throw new Error('Invalid encrypted token format');
     }
 
-    const [ivHex, tagHex, encrypted] = parts;
+    const [maybeSaltHex, ivHex, tagHex, encrypted] = parts.length === 4
+      ? parts
+      : ['salt', ...parts];
+    const salt = parts.length === 4 ? Buffer.from(maybeSaltHex, 'hex') : 'salt';
     const iv = Buffer.from(ivHex, 'hex');
     const tag = Buffer.from(tagHex, 'hex');
     
-    const key = crypto.scryptSync(encryptionKey, 'salt', 32);
+    const key = crypto.scryptSync(encryptionKey, salt, 32);
     
     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
     decipher.setAuthTag(tag);
