@@ -5,6 +5,7 @@ import { BOT_LIMITS, RATE_LIMITS } from '@dialogue-constructor/shared';
 import { createApp } from '../index';
 import { encryptToken } from '../utils/encryption';
 import * as redisModule from '../db/redis';
+import { setRedisUnavailableForTests } from '../db/redis';
 import { createTestPostgresPool, cleanupTestDatabase, seedTestData } from '../../../shared/src/test-utils/db-helpers';
 import { authenticateRequest, buildTelegramInitData } from '../../../shared/src/test-utils/api-helpers';
 import { createMockBotSchema } from '../../../shared/src/test-utils/mock-factories';
@@ -55,13 +56,18 @@ beforeEach(async () => {
   await flushRedis();
 });
 
-beforeAll(() => {
+beforeAll(async () => {
   process.env.BOT_TOKEN = botToken;
   pool = createTestPostgresPool();
+
+  const { initializeRateLimiters } = await import('../index');
+  await initializeRateLimiters();
 });
 
 afterAll(async () => {
-  await pool.end();
+  if (pool) {
+    await pool.end();
+  }
 });
 
 describe('POST /api/bots', () => {
@@ -500,15 +506,17 @@ describe('GET /health', () => {
     expect(response.status).toBe(503);
   });
 
-  it('returns degraded when redis unavailable', async () => {
-    const redisSpy = vi.spyOn(redisModule, 'getRedisClientOptional').mockResolvedValue(null);
-
+it('returns degraded when redis unavailable', async () => {
+  try {
+    setRedisUnavailableForTests(true);
+    
     await authenticateRequest(request.get('/api/bots'), 1);
     const response = await request.get('/health');
-
+    
     expect(response.status).toBe(200);
     expect(response.body.status).toBe('degraded');
-
-    redisSpy.mockRestore();
-  });
+  } finally {
+    setRedisUnavailableForTests(false);
+  }
+});
 });

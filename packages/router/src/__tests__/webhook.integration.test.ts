@@ -1,4 +1,12 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { vi } from 'vitest';
+
+vi.mock('../services/telegram', () => ({
+  sendTelegramMessage: vi.fn().mockResolvedValue({}),
+  sendTelegramMessageWithKeyboard: vi.fn().mockResolvedValue({}),
+  answerCallbackQuery: vi.fn().mockResolvedValue({}),
+}));
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import supertest from 'supertest';
 import { RATE_LIMITS, WEBHOOK_LIMITS, createLogger } from '@dialogue-constructor/shared';
 import { createApp } from '../index';
@@ -15,12 +23,6 @@ import {
 } from '../db/redis';
 import { createTestPostgresPool, cleanupTestDatabase, seedTestData } from '../../../shared/src/test-utils/db-helpers';
 import { createMockBotSchema, createMockTelegramUpdate } from '../../../shared/src/test-utils/mock-factories';
-
-vi.mock('../services/telegram', () => ({
-  sendTelegramMessage: vi.fn().mockResolvedValue({}),
-  sendTelegramMessageWithKeyboard: vi.fn().mockResolvedValue({}),
-  answerCallbackQuery: vi.fn().mockResolvedValue({}),
-}));
 
 import {
   sendTelegramMessage,
@@ -55,6 +57,9 @@ beforeAll(async () => {
   const logger = createLogger('router-test');
   await initPostgres(logger);
   await initRedis(logger);
+
+  const { initializeRateLimiters } = await import('../index');
+  await initializeRateLimiters();
 });
 
 beforeEach(async () => {
@@ -62,10 +67,15 @@ beforeEach(async () => {
   await flushRedis();
   resetInMemoryStateForTests();
   vi.clearAllMocks();
+  expect(vi.isMockFunction(sendTelegramMessage)).toBe(true);
+  expect(vi.isMockFunction(sendTelegramMessageWithKeyboard)).toBe(true);
+  expect(vi.isMockFunction(answerCallbackQuery)).toBe(true);
 });
 
 afterAll(async () => {
-  await pool.end();
+  if (pool) {
+    await pool.end();
+  }
   await closePostgres();
   await closeRedis();
 });
@@ -320,6 +330,8 @@ describe('POST /webhook/:botId redis fallback', () => {
     ]);
     try {
       setRedisUnavailableForTests(true);
+      const redisClient = await getRedisClientOptional();
+      expect(redisClient).toBeNull();
       const response = await sendWebhook(createMockTelegramUpdate(), webhookSecret, botId);
       expect(response.status).toBe(200);
 

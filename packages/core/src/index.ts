@@ -391,6 +391,7 @@ let apiGeneralLimiter: ReturnType<typeof createRateLimiter> | null = null;
 let createBotLimiter: ReturnType<typeof createRateLimiter> | null = null;
 let updateSchemaLimiter: ReturnType<typeof createRateLimiter> | null = null;
 let rateLimiterInitPromise: Promise<void> | null = null;
+let rateLimiterReady: Promise<void> | null = null;
 
 async function initializeRateLimiters() {
   if (apiGeneralLimiter && createBotLimiter && updateSchemaLimiter) {
@@ -423,11 +424,15 @@ async function initializeRateLimiters() {
   return rateLimiterInitPromise;
 }
 
-const rateLimiterReady = initializeRateLimiters();
+export { initializeRateLimiters };
+export { setRedisUnavailableForTests } from './db/redis';
 
 const apiGeneralLimiterMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!apiGeneralLimiter) {
+      if (!rateLimiterReady) {
+        rateLimiterReady = initializeRateLimiters();
+      }
       await rateLimiterReady;
     }
     if (apiGeneralLimiter) {
@@ -442,6 +447,9 @@ const apiGeneralLimiterMiddleware = async (req: Request, res: Response, next: Ne
 const createBotLimiterMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!createBotLimiter) {
+      if (!rateLimiterReady) {
+        rateLimiterReady = initializeRateLimiters();
+      }
       await rateLimiterReady;
     }
     if (createBotLimiter) {
@@ -456,6 +464,9 @@ const createBotLimiterMiddleware = async (req: Request, res: Response, next: Nex
 const updateSchemaLimiterMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!updateSchemaLimiter) {
+      if (!rateLimiterReady) {
+        rateLimiterReady = initializeRateLimiters();
+      }
       await rateLimiterReady;
     }
     if (updateSchemaLimiter) {

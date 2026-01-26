@@ -15,16 +15,20 @@ if (!process.env.ENCRYPTION_KEY) {
 
 beforeAll(async () => {
   if (!process.env.DATABASE_URL) {
-    const postgres = await new GenericContainer('postgres:15')
-      .withExposedPorts(5432)
-      .withEnvironment({
-        POSTGRES_DB: 'test_db',
-        POSTGRES_USER: 'postgres',
-        POSTGRES_PASSWORD: 'test_password',
-      })
-      .start();
-    postgresContainer = postgres;
-    process.env.DATABASE_URL = `postgresql://postgres:test_password@${postgres.getHost()}:${postgres.getMappedPort(5432)}/test_db`;
+    try {
+      const postgres = await new GenericContainer('postgres:15')
+        .withExposedPorts(5432)
+        .withEnvironment({
+          POSTGRES_DB: 'test_db',
+          POSTGRES_USER: 'postgres',
+          POSTGRES_PASSWORD: 'test_password',
+        })
+        .start();
+      postgresContainer = postgres;
+      process.env.DATABASE_URL = `postgresql://postgres:test_password@${postgres.getHost()}:${postgres.getMappedPort(5432)}/test_db`;
+    } catch {
+      throw new Error('Docker required for integration tests or set DATABASE_URL');
+    }
   }
 
   if (!process.env.REDIS_URL) {

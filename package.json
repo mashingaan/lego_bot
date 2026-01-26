@@ -13,6 +13,7 @@
     "clean": "turbo run clean",
     "type-check": "turbo run type-check",
     "test": "vitest run",
+    "test:integration": "cross-env DATABASE_URL= REDIS_URL= npm test",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
@@ -22,6 +23,7 @@
     "@types/supertest": "^2.0.16",
     "@vitest/coverage-v8": "^2.1.3",
     "@vitest/ui": "^2.1.3",
+    "cross-env": "^7.0.3",
     "husky": "^9.0.11",
     "lint-staged": "^15.2.10",
     "supertest": "^6.3.4",
@@ -37,6 +39,10 @@
       "node -e \"require('child_process').execSync('npm run test', { stdio: 'inherit' })\""
     ]
   },
+  "overrides": {
+    "html-encoding-sniffer": "4.0.0"
+  },
+  "overridesComment": "html-encoding-sniffer@6 is CJS requiring ESM-only @exodus/bytes -> ERR_REQUIRE_ESM; pin until upstream ships CJS-safe import/dynamic import.",
   "engines": {
     "node": ">=18.0.0"
   }

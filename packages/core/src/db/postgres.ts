@@ -5,6 +5,7 @@ import type { Logger } from '@dialogue-constructor/shared';
 
 let pool: Pool | null = null;
 let logger: Logger | null = null;
+let closePromise: Promise<void> | null = null;
 const postgresCircuitBreaker = new CircuitBreaker('postgres', {
   failureThreshold: 5,
   resetTimeout: 30000,
@@ -345,10 +346,30 @@ export async function getPostgresClient(): Promise<PoolClient> {
 }
 
 export function closePostgres(): Promise<void> {
-  if (pool) {
-    return pool.end();
+  if (!pool) {
+    return Promise.resolve();
   }
-  return Promise.resolve();
+  if (closePromise) {
+    logger?.info(
+      { service: 'postgres', state: 'already_closing' },
+      'PostgreSQL pool already closing'
+    );
+    return closePromise;
+  }
+  const isEnding = Boolean((pool as any).ending || (pool as any)._ending);
+  if (isEnding) {
+    logger?.info(
+      { service: 'postgres', state: 'already_ending' },
+      'Pool already ending'
+    );
+    return Promise.resolve();
+  }
+  const activePool = pool;
+  closePromise = activePool.end().finally(() => {
+    closePromise = null;
+    pool = null;
+  });
+  return closePromise;
 }
 
 export function getPool(): Pool | null {

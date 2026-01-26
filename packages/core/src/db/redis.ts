@@ -14,6 +14,8 @@ const redisCircuitBreaker = new CircuitBreaker('redis', {
 
 const redisRetryStats = { success: 0, failure: 0 };
 
+let forceRedisUnavailable = false;
+
 const isVercel = process.env.VERCEL === '1';
 
 const REDIS_RETRY_CONFIG = isVercel
@@ -386,6 +388,9 @@ export async function getRedisClient(): Promise<AnyRedisClient> {
 }
 
 export async function getRedisClientOptional(): Promise<AnyRedisClient | null> {
+  if (forceRedisUnavailable) {
+    return null;
+  }
   if (redisCircuitBreaker.getState() === 'open') {
     return null;
   }
@@ -412,4 +417,11 @@ export function getRedisCircuitBreakerStats() {
 
 export function getRedisRetryStats() {
   return { ...redisRetryStats };
+}
+
+export function setRedisUnavailableForTests(unavailable: boolean): void {
+  if (process.env.NODE_ENV !== 'test') {
+    return;
+  }
+  forceRedisUnavailable = unavailable;
 }
