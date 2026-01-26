@@ -8,6 +8,11 @@ export default defineConfig({
     include: ['packages/**/*.test.ts', 'packages/**/*.spec.ts'],
     exclude: ['**/node_modules/**', '**/dist/**'],
     setupFiles: ['packages/core/src/__tests__/setup.ts'],
+    poolOptions: {
+      threads: {
+        singleThread: true,
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov'],

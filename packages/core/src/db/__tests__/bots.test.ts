@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import crypto from 'crypto';
 import { WEBHOOK_LIMITS } from '@dialogue-constructor/shared';
 import {
@@ -13,98 +13,114 @@ import {
   updateWebhookStatus,
 } from '../bots';
 import { getPostgresClient } from '../postgres';
+import { getRedisClientOptional } from '../redis';
 
-vi.mock('../postgres', () => ({
-  getPostgresClient: vi.fn(),
-}));
+const TEST_RUN_ID = crypto.randomUUID();
+const USER_ID_BASE = Number.parseInt(TEST_RUN_ID.replace(/-/g, '').slice(0, 10), 16);
+const redisKeyPrefix = `test:${TEST_RUN_ID}:`;
+
+let userIdCounter = 0;
+let currentUserId = USER_ID_BASE;
+const createdBotIds: string[] = [];
+
+async function cleanupDatabase(userId: number): Promise<void> {
+  const client = await getPostgresClient();
+  try {
+    await client.query('DELETE FROM audit_logs WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM bots WHERE user_id = $1', [userId]);
+  } finally {
+    client.release();
+  }
+}
+
+async function cleanupRedis(botIds: string[]): Promise<void> {
+  const client = await getRedisClientOptional();
+  if (!client) {
+    return;
+  }
+
+  const keysToDelete = new Set<string>();
+
+  let cursor = '0';
+  do {
+    const { cursor: nextCursor, keys } = await client.scan(cursor, { MATCH: `${redisKeyPrefix}*`, COUNT: 100 });
+    cursor = String(nextCursor ?? '0');
+    for (const key of keys ?? []) {
+      keysToDelete.add(key);
+    }
+  } while (cursor !== '0');
+
+  for (const botId of botIds) {
+    keysToDelete.add(`bot:${botId}:schema`);
+  }
+
+  if (keysToDelete.size > 0) {
+    await client.del([...keysToDelete]);
+  }
+}
+
+async function createTestBot(token: string, name: string) {
+  const bot = await createBot({ user_id: currentUserId, token, name });
+  createdBotIds.push(bot.id);
+  return bot;
+}
+
+beforeEach(async () => {
+  currentUserId = USER_ID_BASE + userIdCounter;
+  userIdCounter += 1;
+  createdBotIds.length = 0;
+  await cleanupDatabase(currentUserId);
+  await cleanupRedis(createdBotIds);
+});
+
+afterEach(async () => {
+  await cleanupDatabase(currentUserId);
+  await cleanupRedis(createdBotIds);
+});
 
 describe('bots CRUD operations', () => {
-  const mockClient = {
-    query: vi.fn(),
-    release: vi.fn(),
-  };
-  const mockedGetPostgresClient = vi.mocked(getPostgresClient);
-
-  beforeEach(() => {
-    mockClient.query.mockReset();
-    mockClient.release.mockReset();
-    mockedGetPostgresClient.mockResolvedValue(mockClient as any);
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
   describe('createBot', () => {
     it('should create bot with valid data', async () => {
-      const randomBuffer = Buffer.alloc(WEBHOOK_LIMITS.SECRET_TOKEN_LENGTH, 1);
-      const randomBytesSpy = vi
-        .spyOn(crypto, 'randomBytes')
-        .mockImplementation(((size: number) => randomBuffer) as typeof crypto.randomBytes);
-      const bot = {
-        id: 'bot-1',
-        user_id: 1,
-        token: 'encrypted-token',
-        name: 'Test Bot',
-        webhook_set: false,
-        schema: null,
-        schema_version: 0,
-        webhook_secret: randomBuffer.toString('hex'),
-        created_at: new Date(),
-        updated_at: new Date(),
-      };
-      mockClient.query.mockResolvedValue({ rows: [bot] });
+      const result = await createTestBot('encrypted-token', 'Test Bot');
 
-      const result = await createBot({ user_id: 1, token: 'encrypted-token', name: 'Test Bot' });
-
-      expect(result).toEqual(bot);
-      expect(mockClient.query).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO bots'),
-        [1, 'encrypted-token', 'Test Bot', randomBuffer.toString('hex')]
-      );
-      expect(mockClient.release).toHaveBeenCalled();
-      randomBytesSpy.mockRestore();
+      expect(result.id).toBeTruthy();
+      expect(result.user_id).toBe(currentUserId);
+      expect(result.token).toBe('encrypted-token');
+      expect(result.name).toBe('Test Bot');
+      expect(result.webhook_set).toBe(false);
+      expect(result.schema).toBeNull();
+      expect(result.schema_version).toBe(0);
+      expect(result.webhook_secret).toBeTruthy();
+      expect(result.webhook_secret?.length).toBe(WEBHOOK_LIMITS.SECRET_TOKEN_LENGTH * 2);
     });
   });
 
   describe('getBotsByUserId', () => {
     it('should return bots for user', async () => {
-      const bots = [
-        { id: 'bot-1', user_id: 1, token: 't1', name: 'Bot 1' },
-        { id: 'bot-2', user_id: 1, token: 't2', name: 'Bot 2' },
-      ];
-      mockClient.query.mockResolvedValue({ rows: bots });
+      const botA = await createTestBot('t1', 'Bot 1');
+      const botB = await createTestBot('t2', 'Bot 2');
 
-      const result = await getBotsByUserId(1);
+      const result = await getBotsByUserId(currentUserId);
 
-      expect(result).toEqual(bots);
-      expect(mockClient.query).toHaveBeenCalledWith(
-        expect.stringContaining('ORDER BY created_at DESC'),
-        [1]
-      );
-      expect(mockClient.release).toHaveBeenCalled();
+      expect(result).toHaveLength(2);
+      expect(result.map((bot) => bot.id)).toEqual(expect.arrayContaining([botA.id, botB.id]));
     });
   });
 
   describe('getBotById', () => {
     it('should return bot when found', async () => {
-      const bot = { id: 'bot-1', user_id: 1, token: 't1', name: 'Bot 1' };
-      mockClient.query.mockResolvedValue({ rows: [bot] });
+      const bot = await createTestBot('t1', 'Bot 1');
 
-      const result = await getBotById('bot-1', 1);
+      const result = await getBotById(bot.id, currentUserId);
 
-      expect(result).toEqual(bot);
-      expect(mockClient.query).toHaveBeenCalledWith(
-        expect.stringContaining('WHERE id = $1 AND user_id = $2'),
-        ['bot-1', 1]
-      );
-      expect(mockClient.release).toHaveBeenCalled();
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(bot.id);
+      expect(result?.user_id).toBe(currentUserId);
+      expect(result?.name).toBe('Bot 1');
     });
 
     it('should return null when not found', async () => {
-      mockClient.query.mockResolvedValue({ rows: [] });
-
-      const result = await getBotById('missing', 1);
+      const result = await getBotById('00000000-0000-0000-0000-000000000000', currentUserId);
 
       expect(result).toBeNull();
     });
@@ -112,7 +128,7 @@ describe('bots CRUD operations', () => {
 
   describe('botExistsByToken', () => {
     it('should return true when token exists', async () => {
-      mockClient.query.mockResolvedValue({ rows: [{ exists: true }] });
+      await createTestBot('token', 'Bot');
 
       const result = await botExistsByToken('token');
 
@@ -120,9 +136,7 @@ describe('bots CRUD operations', () => {
     });
 
     it('should return false when token missing', async () => {
-      mockClient.query.mockResolvedValue({ rows: [] });
-
-      const result = await botExistsByToken('token');
+      const result = await botExistsByToken('missing');
 
       expect(result).toBe(false);
     });
@@ -130,17 +144,15 @@ describe('bots CRUD operations', () => {
 
   describe('getBotByWebhookSecret', () => {
     it('should return bot when secret matches', async () => {
-      const bot = { id: 'bot-1', webhook_secret: 'secret' };
-      mockClient.query.mockResolvedValue({ rows: [bot] });
+      const bot = await createTestBot('token', 'Bot');
 
-      const result = await getBotByWebhookSecret('secret');
+      const result = await getBotByWebhookSecret(bot.webhook_secret as string);
 
-      expect(result).toEqual(bot);
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(bot.id);
     });
 
     it('should return null when secret missing', async () => {
-      mockClient.query.mockResolvedValue({ rows: [] });
-
       const result = await getBotByWebhookSecret('missing');
 
       expect(result).toBeNull();
@@ -149,17 +161,17 @@ describe('bots CRUD operations', () => {
 
   describe('setBotWebhookSecret', () => {
     it('should update webhook secret', async () => {
-      mockClient.query.mockResolvedValue({ rowCount: 1 });
+      const bot = await createTestBot('token', 'Bot');
 
-      const result = await setBotWebhookSecret('bot-1', 1, 'secret');
+      const result = await setBotWebhookSecret(bot.id, currentUserId, 'secret');
+      const updated = await getBotById(bot.id, currentUserId);
 
       expect(result).toBe(true);
+      expect(updated?.webhook_secret).toBe('secret');
     });
 
     it('should return false when no rows updated', async () => {
-      mockClient.query.mockResolvedValue({ rowCount: 0 });
-
-      const result = await setBotWebhookSecret('bot-1', 1, 'secret');
+      const result = await setBotWebhookSecret('00000000-0000-0000-0000-000000000000', currentUserId, 'secret');
 
       expect(result).toBe(false);
     });
@@ -167,17 +179,17 @@ describe('bots CRUD operations', () => {
 
   describe('deleteBot', () => {
     it('should delete bot', async () => {
-      mockClient.query.mockResolvedValue({ rowCount: 1 });
+      const bot = await createTestBot('token', 'Bot');
 
-      const result = await deleteBot('bot-1', 1);
+      const result = await deleteBot(bot.id, currentUserId);
+      const fetched = await getBotById(bot.id, currentUserId);
 
       expect(result).toBe(true);
+      expect(fetched).toBeNull();
     });
 
     it('should return false when bot not found', async () => {
-      mockClient.query.mockResolvedValue({ rowCount: 0 });
-
-      const result = await deleteBot('missing', 1);
+      const result = await deleteBot('00000000-0000-0000-0000-000000000000', currentUserId);
 
       expect(result).toBe(false);
     });
@@ -185,26 +197,27 @@ describe('bots CRUD operations', () => {
 
   describe('updateWebhookStatus', () => {
     it('should update webhook_set flag', async () => {
-      mockClient.query.mockResolvedValue({ rowCount: 1 });
+      const bot = await createTestBot('token', 'Bot');
 
-      const result = await updateWebhookStatus('bot-1', 1, true);
+      const result = await updateWebhookStatus(bot.id, currentUserId, true);
+      const updated = await getBotById(bot.id, currentUserId);
 
       expect(result).toBe(true);
+      expect(updated?.webhook_set).toBe(true);
     });
   });
 
   describe('updateBotSchema', () => {
     it('should update schema and increment version', async () => {
+      const bot = await createTestBot('token', 'Bot');
       const schema = { version: 1, states: { start: { message: 'Hi' } }, initialState: 'start' };
-      mockClient.query.mockResolvedValue({ rowCount: 1 });
 
-      const result = await updateBotSchema('bot-1', 1, schema as any);
+      const result = await updateBotSchema(bot.id, currentUserId, schema as any);
+      const updated = await getBotById(bot.id, currentUserId);
 
       expect(result).toBe(true);
-      expect(mockClient.query).toHaveBeenCalledWith(
-        expect.stringContaining('schema_version = schema_version + 1'),
-        [JSON.stringify(schema), 'bot-1', 1]
-      );
+      expect(updated?.schema).toEqual(schema);
+      expect(updated?.schema_version).toBe(1);
     });
   });
 });
