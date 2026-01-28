@@ -1,5 +1,5 @@
 import DOMPurify from 'isomorphic-dompurify';
-import type { BotSchema } from '../types/bot-schema';
+import type { BotSchema } from '../types/bot-schema-browser';
 
 export function sanitizeHtml(input: string): string {
   return DOMPurify.sanitize(input, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });

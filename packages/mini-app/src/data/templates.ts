@@ -1,4 +1,4 @@
-import { BotSchema } from '@dialogue-constructor/shared';
+import { BotSchema } from '@dialogue-constructor/shared/browser';
 
 export interface BotTemplate {
   id: string;
@@ -15,11 +15,12 @@ export interface BotTemplate {
 
 // Templates are stored as JSON for easy edits; this loader keeps the type-safe boundary.
 export async function getTemplates(): Promise<BotTemplate[]> {
-  const modules = import.meta.glob('/templates/*.json', { eager: true, as: 'raw' }) as Record<
-    string,
-    string
-  >;
-  const templates = Object.entries(modules).map(async ([path, raw]) => {
+  const modules = import.meta.glob('../templates/*.json', {
+    eager: true,
+    query: '?raw',
+    import: 'default',
+  }) as Record<string, string>;
+  const templates = Object.entries(modules).map(async ([, raw]) => {
     const data: BotTemplate = JSON.parse(raw);
     return data;
   });

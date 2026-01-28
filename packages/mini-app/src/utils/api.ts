@@ -20,7 +20,7 @@
  *     -d '{"version":1,"initialState":"start","states":{"start":{"message":"Test"}}}'
  */
 import { BotSummary, ApiError, BotUser, AnalyticsEvent, AnalyticsStats, PopularPath, FunnelStep, TimeSeriesData, Broadcast, BroadcastStats, CreateBroadcastData } from '../types';
-import { BotSchema } from '@dialogue-constructor/shared';
+import { BotSchema } from '@dialogue-constructor/shared/browser';
 
 function getApiUrl(): string {
   const hostname =

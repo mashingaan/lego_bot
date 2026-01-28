@@ -8,7 +8,7 @@ import {
   FunnelStep,
   TimeSeriesData,
   MediaContent,
-} from '@dialogue-constructor/shared';
+} from '@dialogue-constructor/shared/browser';
 
 export interface Bot {
   id: string;

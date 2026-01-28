@@ -16,10 +16,10 @@ import path from 'path';
 import pinoHttp from 'pino-http';
 import { RATE_LIMITS, TelegramUpdateSchema, WEBHOOK_INTEGRATION_LIMITS, WEBHOOK_LIMITS, createChildLogger, createLogger, createRateLimiter, errorMetricsMiddleware, getCacheMetrics, getErrorMetrics, logRateLimitMetrics, metricsMiddleware, requestIdMiddleware } from '@dialogue-constructor/shared';
 import { initPostgres, getBotById, closePostgres, getBotSchema, getPoolStats, getPostgresCircuitBreakerStats, getPostgresRetryStats, getPostgresClient } from './db/postgres';
-import { initRedis, closeRedis, getUserState, setUserState, resetUserState, getRedisClientOptional, getRedisCircuitBreakerStats, getRedisRetryStats, getInMemoryStateStats, setPendingInput, getPendingInput, clearPendingInput, markBroadcastUpdateProcessed } from './db/redis';
+import { initRedis, closeRedis, getUserState, setUserState, getRedisClientOptional, getRedisCircuitBreakerStats, getRedisRetryStats, getInMemoryStateStats, setPendingInput, getPendingInput, clearPendingInput, markBroadcastUpdateProcessed } from './db/redis';
 import { decryptToken } from './utils/encryption';
 import { sendTelegramMessage, sendTelegramMessageWithKeyboard, sendTelegramMessageWithReplyKeyboard, sendTelegramMessageWithReplyKeyboardRemove, sendPhoto, sendVideo, sendDocument, sendAudio, sendMediaGroup, answerCallbackQuery, TelegramUpdate } from './services/telegram';
-import { BotSchema } from '@dialogue-constructor/shared/types/bot-schema';
+import type { BotButton, BotSchema, RequestContactButton, RequestEmailButton } from '@dialogue-constructor/shared/types/bot-schema';
 import * as crypto from 'crypto';
 import { createOrUpdateBotUser, getBotUserProfile } from './db/bot-users';
 import { createWebhookLog } from './db/webhook-logs';
@@ -64,9 +64,10 @@ async function startServer() {
     logger.error({ error }, '❌ Failed to initialize PostgreSQL:');
     if (process.env.VERCEL !== '1') {
       process.exit(1);
-      return;
     }
-    logger.warn('⚠️ PostgreSQL initialization failed, continuing without exit');
+    if (process.env.VERCEL === '1') {
+      logger.warn('⚠️ PostgreSQL initialization failed, continuing without exit');
+    }
   }
 
   try {
@@ -175,7 +176,7 @@ const webhookGlobalLimiterMiddleware = async (req: Request, res: Response, next:
   }
 };
 
-const webhookBotIdFormatMiddleware = (req: Request, res: Response, next: NextFunction) => {
+const webhookBotIdFormatMiddleware = (req: Request, _res: Response, next: NextFunction) => {
   const botId = req.params?.botId;
   (req as any).botIdFormatValid = typeof botId === 'string' && BOT_ID_FORMAT_REGEX.test(botId);
   next();
@@ -967,24 +968,39 @@ async function sendStateMessage(
   try {
     const parseMode = state.parseMode ?? 'HTML';
     const rawButtons = state.buttons ?? [];
+    type NormalizedButton = BotButton & { type: 'navigation' | 'request_contact' | 'request_email' | 'url' };
     const normalizedButtons = rawButtons.map((button) => ({
       ...button,
-      type: (button as any).type ?? 'navigation',
-    }));
-    const requestContactButtons = normalizedButtons.filter((button) => button.type === 'request_contact');
-    const requestEmailButtons = normalizedButtons.filter((button) => button.type === 'request_email');
+      type: button.type ?? 'navigation',
+    })) as NormalizedButton[];
+    const requestContactButtons = normalizedButtons.filter(
+      (button): button is RequestContactButton => button.type === 'request_contact'
+    );
+    const requestEmailButtons = normalizedButtons.filter(
+      (button): button is RequestEmailButton => button.type === 'request_email'
+    );
+    type InlineButton = Exclude<BotButton, RequestContactButton | RequestEmailButton> & {
+      type: 'navigation' | 'url';
+    };
     const inlineButtons = normalizedButtons.filter(
-      (button) => button.type === 'navigation' || button.type === 'url'
+      (button): button is InlineButton => button.type === 'navigation' || button.type === 'url'
     );
 
-    const inlineKeyboardButtons = inlineButtons.map((button) =>
-      button.type === 'url'
-        ? { text: button.text, url: button.url }
-        : { text: button.text, nextState: button.nextState }
-    );
-    const inlineKeyboard: Array<Array<{ text: string; nextState?: string; url?: string }>> = [];
-    for (let i = 0; i < inlineKeyboardButtons.length; i += 2) {
-      inlineKeyboard.push(inlineKeyboardButtons.slice(i, i + 2));
+    const inlineKeyboardButtons = inlineButtons.map((button) => {
+      if (button.type === 'url') {
+        if (!button.url) {
+          throw new Error('UrlButton is missing url');
+        }
+        return { text: button.text, url: button.url };
+      }
+      if (!button.nextState) {
+        throw new Error('Navigation button missing nextState');
+      }
+      return { text: button.text, nextState: button.nextState };
+    });
+    const inlineKeyboard: Array<Array<InlineButton>> = [];
+    for (let i = 0; i < inlineButtons.length; i += 2) {
+      inlineKeyboard.push(inlineButtons.slice(i, i + 2));
     }
 
     const replyKeyboard = requestContactButtons.map((button) => ({
@@ -1004,6 +1020,9 @@ async function sendStateMessage(
             parseMode
           );
           const nextButton = requestContactButtons[0];
+          if (!nextButton) {
+            return;
+          }
           await setPendingInput(botId, userId, {
             type: 'contact',
             nextState: nextButton.nextState,
@@ -1037,6 +1056,9 @@ async function sendStateMessage(
 
         if (requestEmailButtons.length > 0) {
           const nextButton = requestEmailButtons[0];
+          if (!nextButton) {
+            return;
+          }
           await sendTelegramMessage(requestLogger, botToken, chatId, 'Введите email...', parseMode);
           await setPendingInput(botId, userId, {
             type: 'email',
@@ -1054,8 +1076,23 @@ async function sendStateMessage(
     } else if (state.media) {
       const caption = state.media.caption ?? state.message;
       const inlineReplyMarkup =
-        inlineKeyboardButtons.length > 0
-          ? { inline_keyboard: inlineKeyboard.map((row) => row.map((btn) => (btn.url ? { text: btn.text, url: btn.url } : { text: btn.text, callback_data: btn.nextState ?? '' }))) }
+        inlineKeyboard.length > 0
+          ? {
+              inline_keyboard: inlineKeyboard.map((row) =>
+                row.map((btn) => {
+                  if (btn.type === 'url') {
+                    if (!btn.url) {
+                      throw new Error('UrlButton is missing url');
+                    }
+                    return { text: btn.text, url: btn.url };
+                  }
+                  if (!btn.nextState) {
+                    throw new Error('Navigation button missing nextState');
+                  }
+                  return { text: btn.text, callback_data: btn.nextState };
+                })
+              ),
+            }
           : undefined;
       const replyMarkup =
         requestContactButtons.length > 0
@@ -1118,6 +1155,9 @@ async function sendStateMessage(
 
         if (requestContactButtons.length > 0) {
           const nextButton = requestContactButtons[0];
+          if (!nextButton) {
+            return;
+          }
           await setPendingInput(botId, userId, {
             type: 'contact',
             nextState: nextButton.nextState,
@@ -1128,6 +1168,9 @@ async function sendStateMessage(
 
         if (requestEmailButtons.length > 0) {
           const nextButton = requestEmailButtons[0];
+          if (!nextButton) {
+            return;
+          }
           await sendTelegramMessage(requestLogger, botToken, chatId, 'Введите email...', parseMode);
           await setPendingInput(botId, userId, {
             type: 'email',
@@ -1152,6 +1195,9 @@ async function sendStateMessage(
         parseMode
       );
       const nextButton = requestContactButtons[0];
+      if (!nextButton) {
+        return;
+      }
       await setPendingInput(botId, userId, {
         type: 'contact',
         nextState: nextButton.nextState,
@@ -1162,6 +1208,9 @@ async function sendStateMessage(
     } else if (requestEmailButtons.length > 0) {
       await sendTelegramMessage(requestLogger, botToken, chatId, 'Введите email...', parseMode);
       const nextButton = requestEmailButtons[0];
+      if (!nextButton) {
+        return;
+      }
       await setPendingInput(botId, userId, {
         type: 'email',
         nextState: nextButton.nextState,

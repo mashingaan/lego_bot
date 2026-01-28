@@ -1,23 +1,18 @@
-// Shared types and utilities
-// For browser bundles use "@dialogue-constructor/shared/browser"; for server use "@dialogue-constructor/shared" or "@dialogue-constructor/shared/server".
-import { createLogger } from './logger';
+// Types
+export * from './types/bot-schema-browser';
+export * from './types/analytics';
 
-export const logger = createLogger('shared');
+// Constants
+export * from './constants/limits-browser';
 
-export * from './logger';
-export * from './middleware';
-export * from './constants/limits';
-export * from './types/bot-schema';
-export * from './services/telegram';
-export * from './utils/circuit-breaker';
-export * from './utils/graceful-degradation';
-export * from './utils/sanitize';
-export * from './utils/telegram-auth';
-export * from './validation/bot-schema-validation';
+// Validation schemas (Zod - browser-safe)
+// validateBotSchema is server-only and intentionally not exported here.
 export * from './validation/schemas';
-export * from './db/bot-users';
-export * from './db/bot-analytics';
 
+// Browser-safe utilities
+export { sanitizeHtml, sanitizeText, sanitizeBotSchema } from './utils/sanitize';
+
+// Shared interfaces
 export interface User {
   id: number;
   telegramId: number;
@@ -60,4 +55,3 @@ export interface DialogueEdge {
   target: string;
   condition?: string;
 }
-

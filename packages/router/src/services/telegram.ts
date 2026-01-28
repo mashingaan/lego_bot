@@ -40,6 +40,9 @@ export interface TelegramUpdate {
       last_name?: string;
       user_id?: number;
     };
+    reply_to_message?: {
+      message_id: number;
+    };
   };
   callback_query?: {
     id: string;

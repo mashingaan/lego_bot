@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { BotSchema } from '@dialogue-constructor/shared';
+import { BotSchema } from '@dialogue-constructor/shared/browser';
 import { api } from '../utils/api';
 import IntegrationTemplateSelector from './IntegrationTemplateSelector';
 import { INTEGRATION_TEMPLATES, IntegrationTemplateDefinition } from '../data/integration-templates';
@@ -31,7 +31,8 @@ export default function StateEditor({
   onChange,
 }: StateEditorProps) {
   const [message, setMessage] = useState(state.message);
-  const [buttons, setButtons] = useState(state.buttons || []);
+  type BotButton = NonNullable<BotSchema['states'][string]['buttons']>[number];
+  const [buttons, setButtons] = useState<BotButton[]>(state.buttons || []);
   const [mediaEnabled, setMediaEnabled] = useState(Boolean(state.media || state.mediaGroup));
   const [mediaMode, setMediaMode] = useState<'single' | 'group'>(
     state.mediaGroup ? 'group' : 'single'
@@ -200,7 +201,7 @@ export default function StateEditor({
       WebApp?.showAlert?.('Максимум 10 элементов в media group.');
       return;
     }
-    const next = [...mediaGroup, { type: 'photo', url: '', caption: '' }];
+    const next: MediaGroupItem[] = [...mediaGroup, { type: 'photo', url: '', caption: '' }];
     setMediaGroup(next);
     onChange({ media: undefined, mediaGroup: next });
   };
@@ -216,7 +217,7 @@ export default function StateEditor({
         return;
       }
     }
-    const next = mediaGroup.map((item, itemIndex) =>
+    const next: MediaGroupItem[] = mediaGroup.map((item, itemIndex) =>
       itemIndex === index ? { ...item, ...updates } : item
     );
     setMediaGroup(next);
@@ -243,7 +244,11 @@ export default function StateEditor({
 
   const handleButtonNextStateChange = (index: number, nextState: string) => {
     const newButtons = [...buttons];
-    newButtons[index] = { ...newButtons[index], nextState };
+    const current = newButtons[index];
+    if (current.type === 'url') {
+      return;
+    }
+    newButtons[index] = { ...current, nextState };
     setButtons(newButtons);
     onChange({ buttons: newButtons });
   };
@@ -258,7 +263,11 @@ export default function StateEditor({
       return;
     }
     const newButtons = [...buttons];
-    newButtons[index] = { ...newButtons[index], url };
+    const current = newButtons[index];
+    if (current.type !== 'url') {
+      return;
+    }
+    newButtons[index] = { ...current, url };
     setButtons(newButtons);
     onChange({ buttons: newButtons });
   };
@@ -292,7 +301,6 @@ export default function StateEditor({
       };
     } else {
       newButtons[index] = {
-        ...newButtons[index],
         type,
         text,
         nextState,
@@ -303,14 +311,12 @@ export default function StateEditor({
   };
 
   const handleAddButton = () => {
-    const newButtons = [
-      ...buttons,
-      {
-        type: 'navigation',
-        text: 'Новая кнопка',
-        nextState: allStates[0] || stateKey,
-      },
-    ];
+    const newButton: BotButton = {
+      type: 'navigation',
+      text: 'Новая кнопка',
+      nextState: allStates[0] || stateKey,
+    };
+    const newButtons = [...buttons, newButton];
     setButtons(newButtons);
     onChange({ buttons: newButtons });
   };
@@ -645,7 +651,7 @@ export default function StateEditor({
                 ) : (button as any).type !== 'request_contact' && (button as any).type !== 'request_email' ? (
                   <select
                     className="input"
-                    value={button.nextState}
+                    value={'nextState' in button ? button.nextState : allStates[0] || stateKey}
                     onChange={(e) => handleButtonNextStateChange(index, e.target.value)}
                   >
                     {allStates.map((s) => (

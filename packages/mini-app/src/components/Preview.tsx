@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BotSchema } from '@dialogue-constructor/shared';
+import { BotSchema } from '@dialogue-constructor/shared/browser';
 import './Preview.css';
 
 interface PreviewProps {
@@ -45,7 +45,12 @@ export default function Preview({ schema }: PreviewProps) {
               <button
                 key={index}
                 className="preview-button"
-                onClick={() => handleButtonClick(button.nextState)}
+                onClick={() => {
+                  if (button.type === 'url') {
+                    return;
+                  }
+                  handleButtonClick(button.nextState);
+                }}
               >
                 {button.text}
               </button>

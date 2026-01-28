@@ -3,7 +3,10 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
-    "types": ["node"]
+    "types": ["node"],
+    "module": "ESNext",
+    "target": "ES2022",
+    "moduleResolution": "bundler"
   },
   "include": ["src/**/*"],
   "exclude": ["api/**/*"],

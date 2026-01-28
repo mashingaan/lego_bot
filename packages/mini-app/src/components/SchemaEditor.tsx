@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BotSchema } from '@dialogue-constructor/shared';
+import { BotSchema } from '@dialogue-constructor/shared/browser';
 import StateEditor from './StateEditor';
 import Preview from './Preview';
 import './SchemaEditor.css';

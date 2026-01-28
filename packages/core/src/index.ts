@@ -9,7 +9,8 @@ import { Telegraf, session } from 'telegraf';
 import { Scenes } from 'telegraf';
 import pinoHttp from 'pino-http';
 import { z } from 'zod';
-import { BOT_LIMITS, RATE_LIMITS, WEBHOOK_INTEGRATION_LIMITS, BotIdSchema, BroadcastIdSchema, CreateBotSchema, CreateBroadcastSchema, PaginationSchema, UpdateBotSchemaSchema, createLogger, createRateLimiter, errorMetricsMiddleware, getErrorMetrics, logBroadcastCreated, logRateLimitMetrics, metricsMiddleware, requestContextMiddleware, requestIdMiddleware, requireBotOwnership, validateBody, validateBotSchema, validateParams, validateQuery, validateTelegramWebAppData } from '@dialogue-constructor/shared';
+import { BOT_LIMITS, RATE_LIMITS, WEBHOOK_INTEGRATION_LIMITS, BotIdSchema, BroadcastIdSchema, CreateBotSchema, CreateBroadcastSchema, PaginationSchema, UpdateBotSchemaSchema, createLogger, createRateLimiter, errorMetricsMiddleware, getErrorMetrics, logBroadcastCreated, logRateLimitMetrics, metricsMiddleware, requestContextMiddleware, requestIdMiddleware, requireBotOwnership, validateBody, validateParams, validateQuery, validateTelegramWebAppData } from '@dialogue-constructor/shared';
+import { getRequestId, validateBotSchema } from '@dialogue-constructor/shared/server';
 import { initPostgres, closePostgres, getPoolStats, getPostgresCircuitBreakerStats, getPostgresConnectRetryBudgetMs, getPostgresRetryStats, POSTGRES_RETRY_CONFIG, getPostgresClient } from './db/postgres';
 import { initRedis, closeRedis, getRedisCircuitBreakerStats, getRedisClientOptional, getRedisRetryStats } from './db/redis';
 import { initializeBotsTable, getBotsByUserId, getBotsByUserIdPaginated, getBotById, updateBotSchema, createBot, deleteBot } from './db/bots';
@@ -389,7 +390,7 @@ async function prewarmConnections() {
 
 // Middleware для проверки инициализации БД
 async function ensureDatabasesInitialized(req: Request, res: Response, next: Function) {
-  const requestId = (req as any).id;
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   const middlewareStart = Date.now();
   try {
     logger.info(
@@ -673,6 +674,7 @@ app.use(metricsMiddleware(logger));
 // Webhook endpoint для основного бота (должен быть ДО express.json() для raw body)
 // Регистрируем сразу, но обработчик будет работать только если botInstance инициализирован
 app.post('/api/webhook', express.raw({ type: 'application/json' }), ensureDatabasesInitialized as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   let updateType: string | undefined;
   let userId: number | null | undefined;
   try {
@@ -714,6 +716,7 @@ app.use(logRateLimitMetrics(logger));
 
 // Health check
 app.get('/health', async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   const isVercel = process.env.VERCEL === '1';
   const postgresPoolConfig = isVercel
     ? { max: 3, idleTimeoutMillis: 5000, connectionTimeoutMillis: 15000 }
@@ -856,6 +859,7 @@ async function requireUserId(req: Request, res: Response, next: Function) {
 
 // POST /api/bots - создать бота
 app.post('/api/bots', ensureDatabasesInitialized as any, validateBody(CreateBotSchema) as any, requireUserId as any, createBotLimiterMiddleware as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const userId = (req as any).user.id;
     const { token, name } = req.body || {};
@@ -910,10 +914,14 @@ app.post('/api/bots', ensureDatabasesInitialized as any, validateBody(CreateBotS
 
 // GET /api/bots - получить список ботов пользователя
 app.get('/api/bots', ensureDatabasesInitialized as any, validateQuery(PaginationSchema) as any, requireUserId as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const userId = (req as any).user.id;
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
-    const cursor = (req.query.cursor as string) || undefined;
+    const parsed = PaginationSchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { limit, cursor } = parsed.data;
 
     logger.info({ userId, requestId, limit, cursorPresent: Boolean(cursor) }, '📋 GET /api/bots');
     
@@ -967,6 +975,7 @@ app.get('/api/bots', ensureDatabasesInitialized as any, validateQuery(Pagination
 
 // GET /api/bot/:id - получить бота
 app.get('/api/bot/:id', ensureDatabasesInitialized as any, validateParams(z.object({ id: BotIdSchema })) as any, requireUserId as any, requireBotOwnership() as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const bot = (req as any).bot;
 
@@ -985,11 +994,11 @@ app.get('/api/bot/:id', ensureDatabasesInitialized as any, validateParams(z.obje
 
 // GET /api/bot/:id/schema - получить схему бота
 app.get('/api/bot/:id/schema', ensureDatabasesInitialized as any, validateParams(z.object({ id: BotIdSchema })) as any, requireUserId as any, requireBotOwnership() as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const bot = (req as any).bot;
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const requestId = (req as any).id;
 
     if (!bot.schema) {
       logger.warn({ userId, botId, requestId }, 'Schema not found');
@@ -1005,10 +1014,10 @@ app.get('/api/bot/:id/schema', ensureDatabasesInitialized as any, validateParams
 });
 
 const updateSchemaHandler = async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const requestId = (req as any).id;
     const schema = req.body;
     const bot = (req as any).bot;
 
@@ -1110,10 +1119,14 @@ app.put('/api/bot/:id/schema', ensureDatabasesInitialized as any, validateParams
 
 // GET /api/bot/:id/webhooks - получить логи webhook
 app.get('/api/bot/:id/webhooks', ensureDatabasesInitialized as any, validateParams(z.object({ id: BotIdSchema })) as any, validateQuery(PaginationSchema) as any, requireUserId as any, requireBotOwnership() as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const botId = req.params.id;
-    const requestId = (req as any).id;
-    const { limit, cursor } = req.query as { limit: number; cursor?: string };
+    const parsed = PaginationSchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { limit, cursor } = parsed.data;
     const result = await getWebhookLogsByBotId(botId, { limit, cursor });
     res.json({ logs: result.logs, nextCursor: result.nextCursor, hasMore: result.hasMore });
   } catch (error) {
@@ -1124,9 +1137,9 @@ app.get('/api/bot/:id/webhooks', ensureDatabasesInitialized as any, validatePara
 
 // GET /api/bot/:id/webhooks/stats - статистика webhook
 app.get('/api/bot/:id/webhooks/stats', ensureDatabasesInitialized as any, validateParams(z.object({ id: BotIdSchema })) as any, requireUserId as any, requireBotOwnership() as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const botId = req.params.id;
-    const requestId = (req as any).id;
     const stats = await getWebhookStats(botId);
     const total = stats.reduce((sum, row) => sum + row.total, 0);
     const success = stats.reduce((sum, row) => sum + row.success_count, 0);
@@ -1141,9 +1154,9 @@ app.get('/api/bot/:id/webhooks/stats', ensureDatabasesInitialized as any, valida
 
 // POST /api/bot/:id/test-webhook - тестовая отправка webhook
 app.post('/api/bot/:id/test-webhook', ensureDatabasesInitialized as any, validateParams(z.object({ id: BotIdSchema })) as any, validateBody(TestWebhookSchema) as any, requireUserId as any, requireBotOwnership() as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const botId = req.params.id;
-    const requestId = (req as any).id;
     const { stateKey } = req.body as { stateKey: string };
     const bot = (req as any).bot;
 
@@ -1208,11 +1221,15 @@ app.post('/api/bot/:id/test-webhook', ensureDatabasesInitialized as any, validat
 
 // GET /api/bot/:id/users - получить список контактов
 app.get('/api/bot/:id/users', ensureDatabasesInitialized as any, validateParams(z.object({ id: BotIdSchema })) as any, validateQuery(PaginationSchema) as any, requireUserId as any, requireBotOwnership() as any, apiGeneralLimiterMiddleware as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const requestId = (req as any).id;
-    const { limit, cursor } = req.query as { limit: number; cursor?: string };
+    const parsed = PaginationSchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { limit, cursor } = parsed.data;
 
     const result = await getBotUsers(botId, userId, { limit, cursor });
     logger.info({ metric: 'bot_users_fetched', botId, count: result.users.length, requestId }, 'Bot users fetched');
@@ -1225,10 +1242,10 @@ app.get('/api/bot/:id/users', ensureDatabasesInitialized as any, validateParams(
 
 // GET /api/bot/:id/users/stats - статистика контактов
 app.get('/api/bot/:id/users/stats', ensureDatabasesInitialized as any, validateParams(z.object({ id: BotIdSchema })) as any, requireUserId as any, requireBotOwnership() as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const requestId = (req as any).id;
 
     const stats = await getBotUserStats(botId, userId);
     res.json(stats);
@@ -1240,10 +1257,10 @@ app.get('/api/bot/:id/users/stats', ensureDatabasesInitialized as any, validateP
 
 // GET /api/bot/:id/users/export - экспорт в CSV
 app.get('/api/bot/:id/users/export', ensureDatabasesInitialized as any, validateParams(z.object({ id: BotIdSchema })) as any, requireUserId as any, requireBotOwnership() as any, exportUsersLimiterMiddleware as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const requestId = (req as any).id;
 
     const csv = await exportBotUsersToCSV(botId, userId);
     logger.info({ metric: 'bot_users_exported', botId, requestId }, 'Bot users exported');
@@ -1261,13 +1278,11 @@ app.get('/api/bot/:id/analytics/events', ensureDatabasesInitialized as any, vali
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const { limit, cursor, event_type, date_from, date_to } = req.query as {
-      limit: number;
-      cursor?: string;
-      event_type?: string;
-      date_from?: string;
-      date_to?: string;
-    };
+    const parsed = AnalyticsEventsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { limit, cursor, event_type, date_from, date_to } = parsed.data;
     const result = await getAnalyticsEvents(botId, userId, {
       limit,
       cursor,
@@ -1287,7 +1302,11 @@ app.get('/api/bot/:id/analytics/stats', ensureDatabasesInitialized as any, valid
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const { date_from, date_to } = req.query as { date_from?: string; date_to?: string };
+    const parsed = AnalyticsStatsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { date_from, date_to } = parsed.data;
     const stats = await getAnalyticsStats(botId, userId, date_from, date_to);
     res.json(stats);
   } catch (error) {
@@ -1301,7 +1320,11 @@ app.get('/api/bot/:id/analytics/paths', ensureDatabasesInitialized as any, valid
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const { limit, date_from, date_to } = req.query as { limit: number; date_from?: string; date_to?: string };
+    const parsed = AnalyticsPathsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { limit, date_from, date_to } = parsed.data;
     const paths = await getPopularPaths(botId, userId, limit, date_from, date_to);
     res.json({ paths });
   } catch (error) {
@@ -1315,7 +1338,11 @@ app.get('/api/bot/:id/analytics/funnel', ensureDatabasesInitialized as any, vali
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const { states, date_from, date_to } = req.query as { states: string; date_from?: string; date_to?: string };
+    const parsed = AnalyticsFunnelQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { states, date_from, date_to } = parsed.data;
     const stateKeys = states.split(',').map((state) => state.trim()).filter(Boolean);
     const steps = await getFunnelData(botId, userId, stateKeys, date_from, date_to);
     res.json({ steps });
@@ -1330,12 +1357,11 @@ app.get('/api/bot/:id/analytics/timeseries', ensureDatabasesInitialized as any, 
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const { event_type, date_from, date_to, granularity } = req.query as {
-      event_type: string;
-      date_from?: string;
-      date_to?: string;
-      granularity?: 'hour' | 'day' | 'week';
-    };
+    const parsed = AnalyticsTimeSeriesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { event_type, date_from, date_to, granularity } = parsed.data;
     const data = await getTimeSeriesData(botId, userId, event_type, date_from, date_to, granularity);
     res.json({ data });
   } catch (error) {
@@ -1349,7 +1375,11 @@ app.get('/api/bot/:id/analytics/export', ensureDatabasesInitialized as any, vali
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const { date_from, date_to } = req.query as { date_from?: string; date_to?: string };
+    const parsed = AnalyticsExportQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { date_from, date_to } = parsed.data;
     const csv = await exportAnalyticsToCSV(botId, userId, date_from, date_to);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="analytics-${botId}.csv"`);
@@ -1398,7 +1428,11 @@ app.get('/api/bot/:id/broadcasts',
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const { limit, cursor } = req.query as { limit: number; cursor?: string };
+    const parsed = PaginationSchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query', details: parsed.error.errors });
+    }
+    const { limit, cursor } = parsed.data;
 
     const result = await getBroadcastsByBotId(botId, userId, { limit, cursor });
     res.json(result);
@@ -1467,7 +1501,7 @@ app.post('/api/internal/process-broadcast',
   ensureDatabasesInitialized as any,
   validateBody(z.object({ broadcastId: BroadcastIdSchema })) as any,
   async (req: Request, res: Response) => {
-    const requestId = (req as any).id;
+    const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
     const internalSecret = process.env.CORE_INTERNAL_SECRET;
     const providedSecret = req.headers['x-internal-secret'];
     if (!internalSecret || providedSecret !== internalSecret) {
@@ -1496,10 +1530,10 @@ app.post('/api/internal/process-broadcast',
 );
 // DELETE /api/bot/:id - удалить бота
 app.delete('/api/bot/:id', ensureDatabasesInitialized as any, validateParams(z.object({ id: BotIdSchema })) as any, requireUserId as any, requireBotOwnership() as any, async (req: Request, res: Response) => {
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   try {
     const userId = (req as any).user.id;
     const botId = req.params.id;
-    const requestId = (req as any).id;
 
     const context = (req as any).context;
     const deleted = await deleteBot(botId, userId, context);
@@ -1915,7 +1949,7 @@ if (!botToken) {
 
 app.use(errorMetricsMiddleware as any);
 app.use((err: any, req: Request, res: Response, next: Function) => {
-  const requestId = (req as any).id;
+  const requestId = getRequestId() ?? (req as any)?.id ?? 'unknown';
   const userId = (req as any).user?.id;
   const errorContext = {
     requestId,

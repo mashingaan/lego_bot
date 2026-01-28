@@ -91,7 +91,11 @@ export async function processBroadcast(broadcastId: string) {
       try {
         let telegramMessageId: number | undefined;
         if (broadcast.media) {
-          telegramMessageId = await sendMediaMessage(logger, bot.token, msg.telegram_user_id, broadcast);
+          telegramMessageId = await sendMediaMessage(logger, bot.token, msg.telegram_user_id, {
+            media: broadcast.media,
+            message: broadcast.message,
+            parse_mode: broadcast.parse_mode,
+          });
         } else {
           telegramMessageId = await sendTelegramMessage(
             logger,

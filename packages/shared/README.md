@@ -1,5 +1,29 @@
 ﻿# Общий пакет (Shared)
 
+## Usage
+
+### Browser (mini-app, frontend)
+```typescript
+import { BotSchema, BotButton } from '@dialogue-constructor/shared/browser';
+```
+
+### Server (core, router)
+```typescript
+import { logger, middleware } from '@dialogue-constructor/shared/server';
+// or
+import { logger, middleware } from '@dialogue-constructor/shared';
+```
+Правило: любой browser-код (mini-app) импортирует только `@dialogue-constructor/shared/browser`.
+Импорт из root (`@dialogue-constructor/shared`) и `@dialogue-constructor/shared/server` в mini-app запрещён.
+
+Enforcement: ESLint `no-restricted-imports` в mini-app и CI `rg`-проверка.
+
+
+
+
+
+
+
 ## Использование логгера
 
 ### Базовое использование

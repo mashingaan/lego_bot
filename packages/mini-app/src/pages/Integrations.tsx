@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../utils/api';
-import { BotSchema } from '@dialogue-constructor/shared';
+import { BotSchema } from '../types';
 import './Integrations.css';
 
 type WebhookLog = {

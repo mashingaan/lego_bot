@@ -49,6 +49,16 @@ jobs:
       - name: Run type check
         run: npm run type-check
 
+      - name: Check shared browser entrypoint
+        run: node packages/shared/scripts/check-browser-entrypoint.mjs
+
+      - name: Enforce shared imports in mini-app
+        run: |
+          if rg -n "@dialogue-constructor/shared" packages/mini-app/src | rg -v "@dialogue-constructor/shared/browser"; then
+            echo "Forbidden shared import found in mini-app/src. Use @dialogue-constructor/shared/browser."
+            exit 1
+          fi
+
       - name: Run tests
         run: npm run test:coverage
         env:

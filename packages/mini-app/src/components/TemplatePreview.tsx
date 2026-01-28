@@ -9,11 +9,18 @@ type TemplatePreviewProps = {
 export default function TemplatePreview({ template, onClose, onUse }: TemplatePreviewProps) {
   const states = Object.entries(template.schema.states);
   const transitions = states.flatMap(([stateKey, state]) =>
-    (state.buttons ?? []).map((button) => ({
-      from: stateKey,
-      to: button.nextState,
-      label: button.text,
-    }))
+    (state.buttons ?? []).flatMap((button) => {
+      if (button.type === 'url') {
+        return [];
+      }
+      return [
+        {
+          from: stateKey,
+          to: button.nextState,
+          label: button.text,
+        },
+      ];
+    })
   );
 
   return (

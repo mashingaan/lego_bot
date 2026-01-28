@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { validateBotSchema } from '@dialogue-constructor/shared';
+import { UpdateBotSchemaSchema } from '@dialogue-constructor/shared/browser';
 import { api } from '../utils/api';
 import { getTemplates, BotTemplate } from '../data/templates';
 import TemplatePreview from '../components/TemplatePreview';
@@ -64,13 +64,14 @@ export default function Templates() {
       try {
         const loadedTemplates = await getTemplates();
         for (const template of loadedTemplates) {
-          const validation = validateBotSchema(template.schema);
-          if (!validation.valid) {
+          const validation = UpdateBotSchemaSchema.safeParse(template.schema);
+          if (!validation.success) {
+            const errors = validation.error.errors.map((err) => err.message);
             console.warn('Template schema validation failed:', {
               templateId: template.id,
-              errors: validation.errors,
+              errors: errors,
             });
-            showAlert(`Шаблон "${template.name}" содержит ошибки: ${validation.errors.join(', ')}`);
+            showAlert(`Шаблон "${template.name}" содержит ошибки: ${errors.join(', ')}`);
           }
         }
         if (isMounted) {
@@ -100,9 +101,10 @@ export default function Templates() {
       return;
     }
 
-    const validation = validateBotSchema(template.schema);
-    if (!validation.valid) {
-      showAlert(`Шаблон содержит ошибки: ${validation.errors.join(', ')}`);
+    const validation = UpdateBotSchemaSchema.safeParse(template.schema);
+    if (!validation.success) {
+      const errors = validation.error.errors.map((err) => err.message);
+      showAlert(`Шаблон содержит ошибки: ${errors.join(', ')}`);
       return;
     }
 

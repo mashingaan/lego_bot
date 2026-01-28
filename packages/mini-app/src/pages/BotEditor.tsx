@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../utils/api';
-import { BotSchema } from '@dialogue-constructor/shared';
+import { BotSchema } from '../types';
 
 const WebApp = window.Telegram?.WebApp;
 import SchemaEditor from '../components/SchemaEditor';

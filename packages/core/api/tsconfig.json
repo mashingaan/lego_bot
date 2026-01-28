@@ -5,7 +5,8 @@
     "target": "ES2020",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    "rootDir": "."
   },
   "include": ["**/*"],
   "exclude": ["node_modules"]
