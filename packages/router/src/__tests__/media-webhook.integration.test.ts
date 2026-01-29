@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 import { vi } from 'vitest';
 
 vi.mock('../services/telegram', () => ({
@@ -19,9 +20,9 @@ import supertest from 'supertest';
 import { createLogger } from '@dialogue-constructor/shared';
 import { createApp } from '../index';
 import { encryptToken } from '../utils/encryption';
-import { initPostgres, closePostgres } from '../db/postgres';
-import { initRedis, closeRedis, resetInMemoryStateForTests } from '../db/redis';
-import { createTestPostgresPool, cleanupTestDatabase, seedTestData } from '../../../shared/src/test-utils/db-helpers';
+import { getPostgresPool, initPostgres, closePostgres } from '../db/postgres';
+import { resetInMemoryStateForTests, getRedisClientOptional, initRedis, closeRedis } from '../db/redis';
+import { createTestPostgresPool, cleanupAllTestState, seedTestData } from '../../../shared/src/test-utils/db-helpers';
 import { createMockBotSchema, createMockTelegramUpdate } from '../../../shared/src/test-utils/mock-factories';
 
 import {
@@ -36,6 +37,8 @@ const app = createApp();
 const request = supertest(app);
 const encryptionKey = process.env.ENCRYPTION_KEY as string;
 let pool: ReturnType<typeof createTestPostgresPool>;
+let routerPool: ReturnType<typeof getPostgresPool>;
+let testLogger: ReturnType<typeof createLogger>;
 
 const webhookSecret = 'test-secret';
 
@@ -46,20 +49,39 @@ async function sendWebhook(body: any, botId: string, secret = webhookSecret) {
     .send(body);
 }
 
+async function verifyBotExists(botId: string): Promise<boolean> {
+  const res = await routerPool.query('SELECT 1 FROM bots WHERE id = $1 LIMIT 1', [botId]);
+  if ((res.rowCount ?? 0) > 0) {
+    return true;
+  }
+  const routerDiag = await routerPool.query(
+    "SELECT current_database() AS db, inet_server_addr() AS addr, inet_server_port() AS port, current_setting('search_path') AS search_path"
+  );
+  const testDiag = await pool.query(
+    "SELECT current_database() AS db, inet_server_addr() AS addr, inet_server_port() AS port, current_setting('search_path') AS search_path"
+  );
+  testLogger.info({ routerDiag: routerDiag.rows?.[0], testDiag: testDiag.rows?.[0] }, 'Bot visibility diagnostics');
+  throw new Error(`Seeded bot ${botId} not visible to router pool`);
+}
+
 beforeAll(async () => {
   pool = createTestPostgresPool();
-  const logger = createLogger('router-test');
-  await initPostgres(logger);
-  await initRedis(logger);
+  testLogger = createLogger('media-webhook-test');
+  await initPostgres(testLogger);
+  await initRedis(testLogger);
+  routerPool = getPostgresPool();
 
   const { initializeRateLimiters } = await import('../index');
   await initializeRateLimiters();
 });
 
 beforeEach(async () => {
-  await cleanupTestDatabase(pool);
-  resetInMemoryStateForTests();
+  const redisClient = await getRedisClientOptional();
+  await cleanupAllTestState(pool, redisClient, resetInMemoryStateForTests);
   vi.clearAllMocks();
+  expect(vi.isMockFunction(sendPhoto)).toBe(true);
+  expect(vi.isMockFunction(sendVideo)).toBe(true);
+  expect(vi.isMockFunction(sendMediaGroup)).toBe(true);
 });
 
 afterAll(async () => {
@@ -85,12 +107,14 @@ describe('POST /webhook/:botId media handling', () => {
           states: {
             photo: {
               message: 'Photo',
+              // media.type = photo, media.url set
               media: { type: 'photo', url: 'https://example.com/photo.jpg' },
             },
           },
         }),
       },
     ]);
+    expect(await verifyBotExists(botId)).toBe(true);
 
     const response = await sendWebhook(createMockTelegramUpdate(), botId);
 
@@ -112,12 +136,14 @@ describe('POST /webhook/:botId media handling', () => {
           states: {
             video: {
               message: 'Video',
+              // media.type = video, media.url set
               media: { type: 'video', url: 'https://example.com/video.mp4' },
             },
           },
         }),
       },
     ]);
+    expect(await verifyBotExists(botId)).toBe(true);
 
     const response = await sendWebhook(createMockTelegramUpdate({ update_id: 2 }), botId);
 
@@ -139,6 +165,7 @@ describe('POST /webhook/:botId media handling', () => {
           states: {
             gallery: {
               message: 'Gallery',
+              // mediaGroup array with expected structure
               mediaGroup: [
                 { type: 'photo', url: 'https://example.com/1.jpg', caption: 'One' },
                 { type: 'photo', url: 'https://example.com/2.jpg', caption: 'Two' },
@@ -149,6 +176,7 @@ describe('POST /webhook/:botId media handling', () => {
         }),
       },
     ]);
+    expect(await verifyBotExists(botId)).toBe(true);
 
     const response = await sendWebhook(createMockTelegramUpdate({ update_id: 3 }), botId);
 
@@ -171,12 +199,14 @@ describe('POST /webhook/:botId media handling', () => {
           states: {
             start: {
               message: 'Links',
+              // media-less state with url button
               buttons: [{ type: 'url', text: 'Open', url: 'https://example.com' }],
             },
           },
         }),
       },
     ]);
+    expect(await verifyBotExists(botId)).toBe(true);
 
     const response = await sendWebhook(createMockTelegramUpdate({ update_id: 4 }), botId);
 
@@ -200,12 +230,14 @@ describe('POST /webhook/:botId media handling', () => {
           states: {
             photo: {
               message: 'Photo',
+              // media.type = photo, media.url set
               media: { type: 'photo', url: 'https://example.com/photo.jpg' },
             },
           },
         }),
       },
     ]);
+    expect(await verifyBotExists(botId)).toBe(true);
 
     const response = await sendWebhook(createMockTelegramUpdate({ update_id: 5 }), botId);
 

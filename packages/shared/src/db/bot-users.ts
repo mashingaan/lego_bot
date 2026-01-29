@@ -79,6 +79,12 @@ export async function createOrUpdateBotUserWithClient(
   telegramUserId: string,
   data: BotUserUpsertData
 ): Promise<BotUser> {
+  // Verify bot exists to provide better error message
+  const botCheck = await client.query('SELECT id FROM bots WHERE id = $1', [botId]);
+  if (botCheck.rows.length === 0) {
+    throw new Error(`Bot with id ${botId} does not exist. Cannot create bot user.`);
+  }
+
   const result = await client.query<BotUser>(
     `INSERT INTO bot_users (
         bot_id,

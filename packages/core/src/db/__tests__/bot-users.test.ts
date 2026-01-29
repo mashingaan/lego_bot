@@ -1,3 +1,5 @@
+// @vitest-environment node
+// Run tests sequentially to avoid race conditions
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import crypto from 'crypto';
 import { createBot } from '../bots';
@@ -26,10 +28,25 @@ async function cleanupDatabase(userId: number, botIds: string[]): Promise<void> 
 async function createTestBot(token: string, name: string) {
   const bot = await createBot({ user_id: currentUserId, token, name });
   createdBotIds.push(bot.id);
+  // Verify bot exists in database
+  const client = await getPostgresClient();
+  try {
+    const result = await client.query('SELECT id FROM bots WHERE id = $1', [bot.id]);
+    if (result.rows.length === 0) {
+      throw new Error(`Bot ${bot.id} was not found in database after creation`);
+    }
+  } finally {
+    client.release();
+  }
   return bot;
 }
 
 beforeEach(async () => {
+  // IMPORTANT: run cleanup *before* resetting/overwriting currentUserId/createdBotIds,
+  // otherwise cleanupDatabase may be called with a new user_id and an empty createdBotIds array.
+  if (currentUserId != null) {
+    await cleanupDatabase(currentUserId, createdBotIds);
+  }
   currentUserId = USER_ID_BASE + userIdCounter;
   userIdCounter += 1;
   createdBotIds.length = 0;

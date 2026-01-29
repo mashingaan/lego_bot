@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 import { vi } from 'vitest';
 
 vi.mock('../services/telegram', () => ({
@@ -7,11 +8,11 @@ vi.mock('../services/telegram', () => ({
 }));
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import supertest from 'supertest';
+import supertest, { type Response } from 'supertest';
 import { RATE_LIMITS, WEBHOOK_LIMITS, createLogger } from '@dialogue-constructor/shared';
 import { createApp } from '../index';
 import { encryptToken } from '../utils/encryption';
-import { initPostgres, closePostgres } from '../db/postgres';
+import { getPostgresPool, initPostgres, closePostgres } from '../db/postgres';
 import {
   getRedisClientOptional,
   getUserState,
@@ -21,7 +22,7 @@ import {
   resetInMemoryStateForTests,
   setRedisUnavailableForTests,
 } from '../db/redis';
-import { createTestPostgresPool, cleanupTestDatabase, seedTestData } from '../../../shared/src/test-utils/db-helpers';
+import { createTestPostgresPool, cleanupAllTestState, seedTestData } from '../../../shared/src/test-utils/db-helpers';
 import { createMockBotSchema, createMockTelegramUpdate } from '../../../shared/src/test-utils/mock-factories';
 
 import {
@@ -34,16 +35,10 @@ const app = createApp();
 const request = supertest(app);
 const encryptionKey = process.env.ENCRYPTION_KEY as string;
 let pool: ReturnType<typeof createTestPostgresPool>;
+let testLogger: ReturnType<typeof createLogger>;
 
 const validBotId = '11111111-1111-1111-1111-111111111111';
 const webhookSecret = 'test-secret';
-
-async function flushRedis() {
-  const client = await getRedisClientOptional();
-  if (client) {
-    await client.flushDb();
-  }
-}
 
 async function sendWebhook(body: any, secret = webhookSecret, botId = validBotId) {
   return request
@@ -52,20 +47,31 @@ async function sendWebhook(body: any, secret = webhookSecret, botId = validBotId
     .send(body);
 }
 
+async function verifyBotExists(botId: string): Promise<boolean> {
+  const routerPool = getPostgresPool();
+  const res = await routerPool.query('SELECT 1 FROM bots WHERE id = $1 LIMIT 1', [botId]);
+  return (res.rowCount ?? 0) > 0;
+}
+
 beforeAll(async () => {
   pool = createTestPostgresPool();
-  const logger = createLogger('router-test');
-  await initPostgres(logger);
-  await initRedis(logger);
+  testLogger = createLogger('router-test');
+  await initPostgres(testLogger);
+  await initRedis(testLogger);
+  await getPostgresPool().query('SELECT 1');
 
   const { initializeRateLimiters } = await import('../index');
   await initializeRateLimiters();
+  const { getRateLimiterStatus } = await import('../index');
+  const rateLimiterStatus = getRateLimiterStatus();
+  testLogger.info({ rateLimiterStatus }, 'Rate limiters initialized');
+  expect(rateLimiterStatus.webhookPerBotLimiter).toBe(true);
+  expect(rateLimiterStatus.webhookGlobalLimiter).toBe(true);
 });
 
 beforeEach(async () => {
-  await cleanupTestDatabase(pool);
-  await flushRedis();
-  resetInMemoryStateForTests();
+  const redisClient = await getRedisClientOptional();
+  await cleanupAllTestState(pool, redisClient, resetInMemoryStateForTests);
   vi.clearAllMocks();
   expect(vi.isMockFunction(sendTelegramMessage)).toBe(true);
   expect(vi.isMockFunction(sendTelegramMessageWithKeyboard)).toBe(true);
@@ -130,11 +136,12 @@ describe('POST /webhook/:botId validation', () => {
       },
     ]);
 
-    const largePayload = Buffer.alloc(WEBHOOK_LIMITS.MAX_PAYLOAD_SIZE + 1);
+    const largeJson = JSON.stringify({ a: 'x'.repeat(WEBHOOK_LIMITS.MAX_PAYLOAD_SIZE) });
     const response = await request
       .post(`/webhook/${validBotId}`)
       .set('x-telegram-bot-api-secret-token', webhookSecret)
-      .send(largePayload);
+      .set('Content-Type', 'application/json')
+      .send(largeJson);
 
     expect(response.status).toBe(413);
   });
@@ -272,10 +279,21 @@ describe('POST /webhook/:botId rate limiting', () => {
         schema: createMockBotSchema(),
       },
     ]);
+    expect(await verifyBotExists(validBotId)).toBe(true);
 
-    const responses = [];
+    const controlBotId = '99999999-9999-9999-9999-999999999999';
+    const controlResponses: number[] = [];
     for (let i = 0; i < RATE_LIMITS.WEBHOOK_PER_BOT.max + 1; i += 1) {
-      responses.push(await sendWebhook(createMockTelegramUpdate({ update_id: i + 1 })));
+      const response = await sendWebhook(createMockTelegramUpdate({ update_id: i + 1 }), webhookSecret, controlBotId);
+      controlResponses.push(response.status);
+      testLogger?.info({ status: response.status }, 'Control request status (missing bot)');
+    }
+
+    const responses: Response[] = [];
+    for (let i = 0; i < RATE_LIMITS.WEBHOOK_PER_BOT.max + 1; i += 1) {
+      const response = await sendWebhook(createMockTelegramUpdate({ update_id: i + 100 }));
+      responses.push(response);
+      testLogger?.info({ status: response.status }, 'Per-bot request status');
     }
 
     const lastResponse = responses[responses.length - 1];
@@ -303,11 +321,15 @@ describe('POST /webhook/:botId rate limiting', () => {
         schema: createMockBotSchema(),
       },
     ]);
+    expect(await verifyBotExists(botA)).toBe(true);
+    expect(await verifyBotExists(botB)).toBe(true);
 
-    const responses = [];
+    const responses: Response[] = [];
     for (let i = 0; i < RATE_LIMITS.WEBHOOK_GLOBAL.max + 1; i += 1) {
       const targetBot = i % 2 === 0 ? botA : botB;
-      responses.push(await sendWebhook(createMockTelegramUpdate({ update_id: i + 10 }), webhookSecret, targetBot));
+      const response = await sendWebhook(createMockTelegramUpdate({ update_id: i + 10 }), webhookSecret, targetBot);
+      responses.push(response);
+      testLogger?.info({ status: response.status, targetBot }, 'Global request status');
     }
 
     const lastResponse = responses[responses.length - 1];

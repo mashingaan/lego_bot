@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 import { vi } from 'vitest';
 
 vi.mock('../services/telegram', () => ({
@@ -22,7 +23,7 @@ import {
   getUserState,
   resetInMemoryStateForTests,
 } from '../db/redis';
-import { createTestPostgresPool, cleanupTestDatabase, seedTestData } from '../../../shared/src/test-utils/db-helpers';
+import { createTestPostgresPool, cleanupAllTestState, seedTestData } from '../../../shared/src/test-utils/db-helpers';
 
 import {
   sendTelegramMessage,
@@ -37,13 +38,6 @@ let pool: ReturnType<typeof createTestPostgresPool>;
 
 const validBotId = '55555555-5555-5555-5555-555555555555';
 const webhookSecret = 'contact-secret';
-
-async function flushRedis() {
-  const client = await getRedisClientOptional();
-  if (client) {
-    await client.flushDb();
-  }
-}
 
 async function sendWebhook(body: any, secret = webhookSecret, botId = validBotId) {
   return request
@@ -63,9 +57,8 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await cleanupTestDatabase(pool);
-  await flushRedis();
-  resetInMemoryStateForTests();
+  const redisClient = await getRedisClientOptional();
+  await cleanupAllTestState(pool, redisClient, resetInMemoryStateForTests);
   vi.clearAllMocks();
 });
 

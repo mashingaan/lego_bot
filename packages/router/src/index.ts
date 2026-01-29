@@ -29,11 +29,21 @@ import { prepareWebhookPayload, sendWebhook, sendWebhookWithRetry } from './serv
 import { sendToGoogleSheets } from './services/integrations/google-sheets';
 import { sendToTelegramChannel } from './services/integrations/telegram-channel';
 
-// Загрузка .env файла из корня проекта
-const envPath = path.resolve(__dirname, '../../../.env');
-dotenv.config({ path: envPath });
+// Загрузка .env файла из корня проекта (skip in test environment)
+const isTestEnv =
+  process.env.NODE_ENV === 'test' ||
+  Boolean(process.env.JEST_WORKER_ID) ||
+  Boolean(process.env.VITEST);
+
+if (!isTestEnv) {
+  const envPath = path.resolve(__dirname, '../../../.env');
+  dotenv.config({ path: envPath });
+}
 const logger = createLogger('router');
-logger.info({ path: envPath }, '📄 Загрузка .env из:');
+if (!isTestEnv) {
+  const envPath = path.resolve(__dirname, '../../../.env');
+  logger.info({ path: envPath }, '📄 Загрузка .env из:');
+}
 
 let app: ReturnType<typeof express> | null = null;
 let appInitialized = false;
@@ -161,6 +171,13 @@ async function initializeRateLimiters() {
 }
 
 export { initializeRateLimiters };
+export function getRateLimiterStatus() {
+  return {
+    webhookPerBotLimiter: Boolean(webhookPerBotLimiter),
+    webhookGlobalLimiter: Boolean(webhookGlobalLimiter),
+    backend: rateLimiterRedisClient ? 'redis' : 'memory',
+  };
+}
 
 const webhookGlobalLimiterMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -200,17 +217,34 @@ function configureApp(app: ReturnType<typeof express>) {
 // Middleware
 app.use(express.json({ limit: WEBHOOK_LIMITS.MAX_PAYLOAD_SIZE }));
 app.use(express.urlencoded({ extended: true }));
+
+// Handle body parser errors (e.g., payload too large)
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  const status = err?.status ?? err?.statusCode;
+  if (err?.type === 'entity.too.large' || status === 413) {
+    const requestId = (req as any).id ?? (req.headers['x-request-id'] as string | undefined);
+    logger.warn({ 
+      requestId, 
+      path: req.path, 
+      contentLength: req.headers['content-length'],
+      limit: WEBHOOK_LIMITS.MAX_PAYLOAD_SIZE 
+    }, 'Request payload too large');
+    return res.status(413).json({ error: 'Payload too large' });
+  }
+  next(err);
+});
+
 app.use(requestIdMiddleware());
 app.use(pinoHttp({ logger }));
 app.use(metricsMiddleware(logger));
 
-// Middleware для проверки размера payload
-// Примечание: `content-length` может отсутствовать/быть неверным. Помимо проверки заголовка,
-// ограничьте парсер/маршрут: например `express.json({ limit: '1mb' })` (или `express.raw({ limit: '1mb' })`) на webhook-маршруте.
+// Secondary defense: check content-length header before webhook processing
+// Primary defense is body parser error handler above
+// Note: this does not prevent body parser crashes (it runs after parsers); keep for defense-in-depth.
 app.use('/webhook/:botId', (req, res, next) => {
   const contentLength = parseInt(req.headers['content-length'] || '0', 10);
   if (contentLength > WEBHOOK_LIMITS.MAX_PAYLOAD_SIZE) {
-    logger.warn({ botId: req.params.botId, contentLength }, 'Webhook payload too large');
+    logger.warn({ botId: req.params.botId, contentLength }, 'Webhook payload too large (header check)');
     return res.status(413).json({ error: 'Payload too large' });
   }
   next();

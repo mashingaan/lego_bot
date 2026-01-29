@@ -1,27 +1,35 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import supertest from 'supertest';
 import crypto from 'crypto';
 import { BOT_LIMITS, RATE_LIMITS } from '@dialogue-constructor/shared';
-import { createApp } from '../index';
+import { createApp, setRedisAvailableForTests } from '../index';
 import { encryptToken } from '../utils/encryption';
 import * as redisModule from '../db/redis';
 import { setRedisUnavailableForTests } from '../db/redis';
-import { createTestPostgresPool, cleanupTestDatabase, seedTestData } from '../../../shared/src/test-utils/db-helpers';
+import { createTestPostgresPool, cleanupAllTestState, seedTestData } from '../../../shared/src/test-utils/db-helpers';
 import { authenticateRequest, buildTelegramInitData } from '../../../shared/src/test-utils/api-helpers';
 import { createMockBotSchema } from '../../../shared/src/test-utils/mock-factories';
 
 const app = createApp();
 const request = supertest.agent(app);
 let pool: ReturnType<typeof createTestPostgresPool>;
+let postgresPool: any;
 const encryptionKey = process.env.ENCRYPTION_KEY as string;
 const botToken = process.env.BOT_TOKEN || 'test-bot-token';
 
-async function flushRedis() {
-  const client = await redisModule.getRedisClientOptional();
-  if (client) {
-    await client.flushDb();
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitForPostgresReady = async (pool: any, attempts = 5, delayMs = 200) => {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      await pool.query('SELECT 1');
+      return;
+    } catch (err) {
+      if (i === attempts) throw err;
+      await sleep(delayMs);
+    }
   }
-}
+};
 
 function makeValidBotToken(seed: string) {
   const safe = seed.replace(/[^A-Za-z0-9_-]/g, 'a');
@@ -52,16 +60,35 @@ async function deleteBotApi(userId: number, botId: string) {
 }
 
 beforeEach(async () => {
-  await cleanupTestDatabase(pool);
-  await flushRedis();
+  const redisClient = await redisModule.getRedisClientOptional();
+  await cleanupAllTestState(pool, redisClient);
+  
+  // Reset module-level flags to default state before each test
+  setRedisUnavailableForTests(false);
+  setRedisAvailableForTests(true);
+});
+
+afterEach(() => {
+  // Defensive reset in case a test fails before its own `finally` cleanup
+  setRedisUnavailableForTests(false);
+  setRedisAvailableForTests(true);
 });
 
 beforeAll(async () => {
   process.env.BOT_TOKEN = botToken;
   pool = createTestPostgresPool();
 
-  const { initializeRateLimiters } = await import('../index');
+  // Initialize databases explicitly to ensure dbInitialized flag is set before any /health request
+  const { initializeDatabases, initializeRateLimiters } = await import('../index');
+  await initializeDatabases();
   await initializeRateLimiters();
+
+  const { getPool } = await import('../db/postgres'); // dynamic import is ok, but do it once
+  postgresPool = getPool();
+  if (!postgresPool) {
+    throw new Error('Postgres pool not initialized after initializeDatabases()');
+  }
+  await waitForPostgresReady(postgresPool); // Ensure connection is stable
 });
 
 afterAll(async () => {
@@ -506,17 +533,24 @@ describe('GET /health', () => {
     expect(response.status).toBe(503);
   });
 
-it('returns degraded when redis unavailable', async () => {
-  try {
-    setRedisUnavailableForTests(true);
-    
-    await authenticateRequest(request.get('/api/bots'), 1);
-    const response = await request.get('/health');
-    
-    expect(response.status).toBe(200);
-    expect(response.body.status).toBe('degraded');
-  } finally {
-    setRedisUnavailableForTests(false);
-  }
-});
+  it('returns degraded when redis unavailable', async () => {
+    const freshModule = await import('../index');
+    const freshRequest = supertest(freshModule.createApp());
+    await freshModule.initializeDatabases();
+
+    try {
+      freshModule.setRedisUnavailableForTests(true);
+      freshModule.setRedisAvailableForTests(false);
+
+      const response = await freshRequest.get('/health');
+
+      expect(response.status).toBe(200);
+      expect(response.body.status).toBe('degraded');
+      expect(response.body.databases.postgres.status).toBe('ready');
+      expect(response.body.databases.redis.status).toBe('degraded');
+    } finally {
+      freshModule.setRedisUnavailableForTests(false);
+      freshModule.setRedisAvailableForTests(true);
+    }
+  });
 });

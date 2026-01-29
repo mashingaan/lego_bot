@@ -3,15 +3,16 @@ import supertest from 'supertest';
 import crypto from 'crypto';
 import { createApp } from '../index';
 import { encryptToken } from '../utils/encryption';
-import { createTestPostgresPool, cleanupTestDatabase, seedTestData } from '../../../shared/src/test-utils/db-helpers';
+import { createTestPostgresPool, cleanupAllTestState, seedTestData } from '../../../shared/src/test-utils/db-helpers';
 import { authenticateRequest } from '../../../shared/src/test-utils/api-helpers';
+import { getRedisClientOptional } from '../db/redis';
 
 const app = createApp();
 const request = supertest.agent(app);
 let pool: ReturnType<typeof createTestPostgresPool>;
 const encryptionKey = process.env.ENCRYPTION_KEY as string;
 const botToken = process.env.BOT_TOKEN || 'test-bot-token';
-const rateLimitCooldownMs = 1100;
+const rateLimitCooldownMs = 1500;
 
 async function seedBotUsers(botId: string, telegramIds: string[]) {
   for (const telegramId of telegramIds) {
@@ -37,7 +38,8 @@ async function seedBotUsers(botId: string, telegramIds: string[]) {
 }
 
 beforeEach(async () => {
-  await cleanupTestDatabase(pool);
+  const redisClient = await getRedisClientOptional();
+  await cleanupAllTestState(pool, redisClient);
   await new Promise((resolve) => setTimeout(resolve, rateLimitCooldownMs));
 });
 

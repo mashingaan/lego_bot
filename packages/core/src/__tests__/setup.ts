@@ -1,3 +1,7 @@
+// CRITICAL: Set NODE_ENV before imports to prevent dotenv from loading .env
+// This allows testcontainers to start when DATABASE_URL is unset
+process.env.NODE_ENV = 'test';
+
 import { afterAll, beforeAll } from 'vitest';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import { createLogger } from '@dialogue-constructor/shared';
@@ -8,7 +12,6 @@ import { initRedis, closeRedis } from '../db/redis';
 let postgresContainer: StartedTestContainer | null = null;
 let redisContainer: StartedTestContainer | null = null;
 
-process.env.NODE_ENV = 'test';
 if (!process.env.ENCRYPTION_KEY) {
   process.env.ENCRYPTION_KEY = 'test_encryption_key_32_chars_long';
 }

@@ -411,3 +411,10 @@ export function getPostgresCircuitBreakerStats() {
 export function getPostgresRetryStats() {
   return { ...postgresRetryStats };
 }
+
+export function getPostgresPool(): Pool {
+  if (!pool) {
+    throw new Error('PostgreSQL pool is not initialized');
+  }
+  return pool;
+}

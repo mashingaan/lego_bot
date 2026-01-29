@@ -37,11 +37,21 @@ import { processBroadcastAsync } from './services/broadcast-processor';
  * - Redis для кеширования
  */
 
-// Загрузка .env файла из корня проекта
-const envPath = path.resolve(__dirname, '../../../.env');
-dotenv.config({ path: envPath });
+// Загрузка .env файла из корня проекта (skip in test environment)
+const isTestEnv =
+  process.env.NODE_ENV === 'test' ||
+  Boolean(process.env.JEST_WORKER_ID) ||
+  Boolean(process.env.VITEST);
+
+if (!isTestEnv) {
+  const envPath = path.resolve(__dirname, '../../../.env');
+  dotenv.config({ path: envPath });
+}
 const logger = createLogger('core');
-logger.info({ path: envPath }, '📄 Загрузка .env из:');
+if (!isTestEnv) {
+  const envPath = path.resolve(__dirname, '../../../.env');
+  logger.info({ path: envPath }, '📄 Загрузка .env из:');
+}
 
 let app: ReturnType<typeof express> | null = null;
 let appInitialized = false;
@@ -541,8 +551,15 @@ async function initializeRateLimiters() {
   return rateLimiterInitPromise;
 }
 
-export { initializeRateLimiters };
+export { initializeRateLimiters, initializeDatabases };
 export { setRedisUnavailableForTests } from './db/redis';
+
+export function setRedisAvailableForTests(available: boolean): void {
+  if (process.env.NODE_ENV !== 'test') {
+    return;
+  }
+  redisAvailable = available;
+}
 
 const apiGeneralLimiterMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
